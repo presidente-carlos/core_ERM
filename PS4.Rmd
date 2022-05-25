@@ -1,0 +1,476 @@
+---
+title: 'Core ERM Problem Set #4'
+author: "2937141"
+date: "May 26th"
+output: pdf_document
+fontsize: 12pt
+---
+
+
+## Problem \#1 - Contaminated Wells in Bangladesh
+
+This problem uses a dataset containing household-level data from Bangladesh, `wells.csv`, that you can download from my website: `https://ditraglia.com/data/wells.csv`. Here is some background on the dataset from Gelman and Hill (2007):
+
+
+> Many of the wells used for drinking water in Bangladesh and other South Asian countries are contaminated with natural arsenic ... a research team from the United States and Bangladesh measured all the wells [in a small region] and labeled them with their arsenic level as well as a characterization of "safe" (below 0.5 in units of hundreds of micrograms per liter, the Bangladesh standard for arsenic in drinking water) or "unsafe" (above 0.5). People with unsafe wells were encouraged to switch to nearby private or community wells or to new wells of their own construction. A few years later, the researchers returned to find out who had switched wells.
+
+You task in this problem is to predict which households will switch wells using the following information:
+
+| Name | Description |
+|-----|-----------------------------------------------|
+| dist | Distance to closest known safe well (meters) | 
+| arsenic | Arsenic level of respondent's well (100s of micrograms per liter) |
+| switch | Dummy variable equal to 1 if switched to a new well |
+| assoc | Dummy variable equal to 1 if any member of the household is active in community organizations |
+| educ | Education level of head of household (years) |
+
+To be clear, the dataset contains *only* information for households with an arsenic level of 0.5 or above, as these are the households that were encouraged to switch wells. Moreover, the variable `switch` is measured *after* the variables `dist100` and `arsenic`. In other words, `arsenic` is the arsenic level in the original contaminated well that the household was using *before* we learned whether they switched wells. Similarly, `dist100` was the distance to the nearest well safe well before we know whether the household switched wells.
+
+To answer this question, you will need three additional pieces of information:
+
+(i) The [*Bayes classifier*](https://en.wikipedia.org/wiki/Bayes_classifier) is a rule for predicting whether $Y=1$ or $Y=0$ given $X$ based on the estimated probability $\hat{P}(Y=1|X)$. If this probability is greater than $1/2$, the Bayes classifier predicts $\hat{Y} = 1$; otherwise it predicts $\hat{Y} = 0$. 
+(ii) The *error rate* of a classifier is defined as the fraction of incorrect predictions that it makes. 
+(iii) For a binary prediction problem the [*confusion matrix*](https://en.wikipedia.org/wiki/Confusion_matrix) is a $2\times 2$ matrix that counts up the number of true positives, $(\hat{Y} = Y = 1)$, true negatives $(\hat{Y} = Y = 0)$, false positives $(\hat{Y} = 1, Y=0)$, and false negatives $(\hat{Y} = 0, Y = 0)$. The confusion matrix can be used, among other things, to calculate the sensitivity and specificity of a classifier.
+
+Write code to complete the following steps:
+
+```{r, echo=FALSE}
+## Load packages
+library(tidyverse)
+library(gridExtra)
+library(modelsummary)
+
+##For knitting
+tinytex::install_tinytex()
+```
+
+
+1. Preliminaries:
+      (a) Load the data and store it in a tibble called `wells`.
+      (b) Use `dplyr` to create a variable called `larsenic` that equals the natural logarithm of `arsenic`.
+      (b) Use `ggplot2` to make a histogram of `arsenic` and `larsenic`. Be sure to label your plots appropriately. Comment on your findings. 
+      (c) Use `dplyr` to create a variable called `dist100` that contains the same information as `dist` but measured in *hundreds of meters* rather than in meters. 
+      (d) Use `dplyr` to create a variable called `zeduc` that equals the *z-score* of `educ`, i.e. `educ` after subtracting its mean and dividing by its standard deviation.
+      
+Comments:
+
+b) At first glance, the `arsenic`variable follows almost a perfect declining exponential distribution. This is, there are many wells with low arsenic levels and very few ones with very large values. When taking logs our distribution moves towards a more "uniform" looking distribution, although it remains skewed to the right.
+      
+```{r}
+## Import data
+wells<-as_tibble(read.csv("https://ditraglia.com/data/wells.csv"))
+wells<- wells %>% mutate(larsenic = log(arsenic))
+
+## Plot
+arsenic_plot<- wells %>% ggplot +
+  geom_histogram(aes(x=arsenic), fill = "grey")+
+  xlab("Arsenic (100s micrograms per liter)")
+
+larsenic_plot<- wells %>% ggplot +
+  geom_histogram(aes(x=larsenic), fill = "orange")+
+  xlab("Log(Arsenic)")
+grid.arrange(arsenic_plot, larsenic_plot, ncol = 2) 
+
+wells<-wells %>% mutate(dist100 = dist/100, 
+                        zeduc = ((educ-mean(educ))/sd(educ)))
+
+```
+      
+2. First Regression: `fit1` 
+      (a) Run a logistic regression using `dist100` to predict `switch` and store the result in an object called `fit1`. 
+      (b) Use `ggplot2` to plot the logistic regression function from part (a) along with the data, jittered appropriately. 
+      (c) Discuss your results from parts (a)-(b). In particular: based on `fit1`, is `dist100` a statistically significant predictor of `switch`? Does the sign of its coefficient make sense? Explain.
+      (d) Use `fit1` to calculate the predicted probability of switching wells for the *average* household in the dataset. 
+      (e) Use `fit1` to calculate the marginal effect of `dist100` for the *average* household in the dataset. Interpret your result. How does it compare to the "divide by 4" rule and the average partial effect?
+
+Comments:
+
+c) Distance seems to have a negative significant effect on the probability of switching. This result is consistent with our expectations as suggests that the larger the distance between respondent's location and a healthy well has a negative effect on the probability that that family changes its selected well.
+
+d) The predicted probability of switching at the distance average household is of 0.58
+
+e) The marginal effect at the average is of -0.152. This effect is smaller than the divide by four rule, what makes sense, given that the divide by four rule gives an estimate of the maximum marginal effect in the distribution. Moreover, we observe that the marginal effect at the average is slightly higher than the average marginal effect for this realization of the data.
+      
+```{r}
+## Regression
+fit1<-wells %>% glm(switch ~ dist100, data = ., 
+                    family = binomial(link="logit"))
+
+summary(fit1)
+
+## Plot
+wells %>% ggplot(aes(x=dist100, y=switch)) +
+  stat_smooth(method='glm', method.args = list(family = "binomial"),
+              formula = y ~ x) + 
+  geom_jitter(width = 0.5, height = 0.3)
+
+## Predicted probability at the average
+predict(fit1, newdata = data.frame(dist100=mean(wells$dist100)),
+        type = "response")
+
+## Marginal effect at the average
+alpha<-coefficients(fit1)[1]
+beta<-coefficients(fit1)[2]
+mg_effect_avg<-beta*dlogis(alpha+mean(wells$dist100)*beta)
+print(paste("The marginal effect at the average is",
+            round(mg_effect_avg,3)))
+
+## Divide by four rule
+div_four_rule<-beta/4
+print(paste("The divide by four rule estimate is",
+            round(div_four_rule,3)))
+
+## Average marginal effect
+avg_mg_effect<-beta*mean(dlogis(alpha+(wells$dist100)*beta))
+print(paste("The average marginal effect is",
+            round(avg_mg_effect, 3)))
+
+
+```
+
+3. Predictive performance of `fit1`
+      (a) Add a column called `p1` to `wells` containing the predicted probabilities that `switch` equals one based on `fit1`.
+      (b) Add a column called `pred1` to `wells` that gives the predicted *values* of $y$ that correspond to `p1`.
+      (c) Use `pred1` to calculate the *error rate* of the Bayes classifier constructed from `fit1` based on the full dataset, i.e.\ `wells`. Recall that this classifier uses the predicted probabilities from `fit1` in the following way: $p>0.5 \implies$ predict 1, $p\leq 0.5\implies$ predict 0. Hint: you can do this using the `summarize` function from `dplyr`.
+      (d) Use `pred1` to construct the *confusion matrix* for `fit1`. Hint: use the function `table()`. 
+      (e) Based on your results from (d), calculate the *sensitivity* and *specificity* of the predictions from `fit1`.
+      (f) Comment on your results from (c) and (e). In particular, compare them to the error rate that you would obtain by simply predicting the *most common* value of `switch` for every observation in the dataset. (This is called the "null model" since it doesn't use any predictors.)
+      
+Comments:
+f) We observe a very high error rate (of over 40%). When looking more closely into the confusion matrix, we observe how our model is essentially predicting that "everybody" is switching wells. In prediction language, our prediction mechanism has a very high sensitivity but very low specificity. 
+
+To evidence that our model is not doing a great job in making predictions, we can compare it to the the null-model which predicts that everybody is switching wells (given that switching is the most likely outcome). The null-model obtains a 42% error rate, just two points above our one-regressor prediction model.
+
+```{r}
+## Predictions
+wells$p1<-predict(fit1, type = 'response')
+wells$pred1<-ifelse(wells$p1>0.5, 1, 0)
+
+## Error rate
+error1<-wells %>% mutate(error=(pred1!=switch)) %>%
+  summarize(error_rate = mean(error))
+error1
+
+cm<-table(true_val = wells$switch,
+          pred_val = wells$pred1)
+cm
+
+## Define true positive as switch = 1, pred1 = 1
+sensitivity<-cm[2,2]/(cm[2,2] + cm[2,1])
+sensitivity
+specificity<-cm[1,1]/(cm[1,1] + cm[1,2])
+specificity
+
+
+## Null model
+null_model<-table(wells$switch)
+null_model
+
+## Error rate null_model
+null_model["0"]/nrow(wells)
+
+```
+      
+4. Additional regressions: `fit2`, `fit3`, and `fit4`
+      (a) Run a logistic regression using `larsenic` to predict `switch` and store the results in an object called `fit2`.
+      (b) Run a logistic regression using `zeduc` to predict `switch` and store the results in an object called `fit3`.
+      (c) Run a logistic regression using `dist100`, `larsenic`, and `zeduc` to predict `switch` and store the results in an object called `fit4`.
+      (d) Make a nicely-formatted summary table of the results from `fit1`, `fit2`, `fit3`, and `fit4`. Make sure to add appropriate labels and captions, use a reasonable number of decimal places, etc.
+      
+```{r}
+fit2<-wells %>% glm(switch ~ larsenic, data =.,
+                    family = binomial(link = "logit"))
+fit3<-wells %>% glm(switch ~ zeduc, data =.,
+                    family = binomial(link = "logit"))
+fit4<-wells %>% glm(switch ~ dist100 + larsenic + zeduc, data =.,
+                    family = binomial(link = "logit"))
+modelsummary(list("Fit 1"=fit1, "Fit 2"=fit2,
+                  "Fit 3"=fit3, "Fit 4"=fit4),
+             fmt = 3,
+             stars = T,
+             gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC',
+             title = 'Regression results for wells dataset')
+```
+      
+5. Interpreting `fit2`, `fit3` and `fit4`
+      (a) Repeat parts (b) and (c) of question \#2 above with `fit2` in place of `fit1`.
+      (b) Repeat parts (b) and (c) of question \#2 above with `fit3` in place of `fit1`.
+      (c) Calculate the marginal effect of *each predictor* in `fit4` for the *average* household in the dataset. Compare to the average partial effects and "divide by 4 rule."
+      
+Comments:
+
+c) Overall, we observe how, according to the theory, the divide by four rule gives an upper bound to the marginal effects of any covariate value in the distribution. Moreover, we observe how in all three cases the marginal effect at the average is slightly higher than the average marginal effects.
+      
+```{r}
+
+## Plot Fit2
+fit2_plot<-wells %>% ggplot(aes(x=larsenic, y=switch)) +
+  stat_smooth(method='glm', method.args = list(family = "binomial"),
+              formula = y ~ x) + 
+  geom_jitter(width = 0.5, height = 0.3) + 
+  ggtitle("larsenic")
+
+## Plot Fit3
+fit3_plot<-wells %>% ggplot(aes(x=zeduc, y=switch)) +
+  stat_smooth(method='glm', method.args = list(family = "binomial"),
+              formula = y ~ x) + 
+  geom_jitter(width = 0.5, height = 0.3) +
+  ggtitle("zeduc")
+
+grid.arrange(fit2_plot, fit3_plot, ncol=2)
+
+
+## Marginal effect and others
+
+  alpha_f4<-coefficients(fit4)[1]
+  beta_f4<-coefficients(fit4)[2:4]
+  
+  avg_dist<-mean(wells$dist100)
+  avg_larsenic<-mean(wells$larsenic)
+  avg_zeduc<-mean(wells$zeduc)
+
+for (i in c("dist100", "larsenic", "zeduc")){
+  
+  ## Marginal effect at the average
+  mg_effect_avg<-beta_f4[i]*dlogis(alpha_f4+
+                                  avg_dist*beta_f4["dist100"]+
+                                  avg_larsenic*beta_f4["larsenic"]+
+                                  avg_zeduc*beta_f4["zeduc"]
+                                )
+  print(paste("The marginal effect of",
+                i,
+                "at the average is",
+              round(mg_effect_avg,3)))
+  
+  ## Divide by four rule
+  div_four_rule<-beta_f4[i]/4
+  print(paste("The divide by four rule estimate of",
+              i,
+              "is",
+              round(div_four_rule,3)))
+  
+  ## Average marginal effect
+  avg_mg_effect<-beta_f4[i]*mean(dlogis(alpha_f4+
+                                        (wells$dist100)*beta_f4["dist100"]+
+                                        (wells$larsenic)*beta_f4["larsenic"]+
+                                        (wells$zeduc)*beta_f4["zeduc"]))
+  print(paste("The average marginal effect of",
+              i,
+              "is",
+              round(avg_mg_effect, 3)))
+}
+
+```      
+6. Predictive Performance of `fit4`
+      (a) Repeat part 3 with `fit4`, `p4`, and `pred4` in place of `fit1`, `p1` and `pred1`. 
+      (b) Using your results from (a) and question \#3 above, compare the in-sample predictive performance of `fit1` and `fit4`.
+
+Comments:
+
+b) The in-sample comparison (which is a bit of an unfair comparison across the two assignment mechanisms) show that the error rate of `fit4` is lower to the one of `fit1`. When looking at the confusion matrix we observe how this improvement in classification is essentially being driven by a big increase in the specificity of `fit4`. On the other hand, `fit4` is less sensitive than `fit1`.
+
+```{r}
+## Predictions
+wells$p4<-predict(fit4, type = 'response')
+wells$pred4<-ifelse(wells$p4>0.5, 1, 0)
+
+## Error rate
+error4<-wells %>% mutate(error=(pred4!=switch)) %>%
+  summarize(error_rate = mean(error))
+error4
+
+## Confusion matrix
+cm4<-table(true_val = wells$switch,
+          pred_val = wells$pred4)
+cm4
+
+## Define true positive as switch = 1, pred1 = 1
+sensitivity4<-cm4[2,2]/(cm4[2,2] + cm4[2,1])
+
+specificity4<-cm4[1,1]/(cm4[1,1] + cm4[1,2])
+
+## Comparing vs fit1
+compare<- data.frame("Specifificty" = c(specificity, specificity4), 
+           "Sensitivity" = c(sensitivity, sensitivity4))
+row.names(compare)<-c("Fit1", "Fit4")
+compare
+
+```
+
+
+## Problem \#2 - Mis-classified Binary Outcomes
+
+You may remember from you introductory econometrics course that "classical" measurement error in $X$ is a problem for linear regression but classical measurement error in $Y$ is not. In particular, if we observe $Y = Y^* + W$ where $W$ is uncorrelated $X$ and $Y$, then a regression of $Y$ on $X$ identifies the same population slope parameter as a regression of $Y^*$ on $X$. Noise in the outcome variable increases the standard errors of our regression estimators, but doesn't bias them. In this example you will explore the consequences of measurement error for a *binary* outcome variable. 
+
+Suppose that the "true" underlying binary outcome $Y_i^*$ is generated according to
+$$
+Y_i^*|X_i \sim \text{indep. Bernoulli}(p_i), \quad p_i = \texttt{plogis}(\alpha + \beta X_i), \quad i = 1, ..., n
+$$
+where $\alpha$ and $\beta$ are unknown scalars that we hope to estimate. While $X_i$ is observed, $Y_i^*$ is not. Instead we observe a "surrogate" variable $Y_i$ generated according to
+$$
+Y_i|(Y_i^*,X_i) \sim \text{indep. Bernoulli}(q_i), \quad q_i = \pi (1 - Y_i^*) + (1 - \pi) Y_i^*
+$$
+where $\pi \in [0, 1]$ is an unknown parameter. If $\pi = 0$ then $Y_i = Y_i^*$ then this model reduces to a garden-variety logistic regression. If $\pi \neq 0$, then $Y_i$ is a noisy measure of $Y_i^*$. When $Y_i^* = 0$, we have $Y_i = 1$ with probability $\pi$ and $Y_i = 0$ with probability $(1 - \pi)$. When $Y_i^* = 1$, we have $Y_i = 1$ with probability $(1 - \pi)$ and $Y_i = 0$ with probability $\pi$. Thus $\pi$ is the mis-classification probability: the probability that the observed "surrogate" outcome $Y_i$ does not equal the unobserved, true outcome $Y_i^*$.
+
+1. Write a function called `noisy_logit()` that simulates from the model described above. It should take four arguments: `pi` is the mis-classification probability $\pi$, `a` is the parameter $\alpha$, `b` is the parameter $\beta$, and `x` is a vector of $n$ observations of $X_i$.
+
+```{r}
+noisy_logit<-function(pi, a, b, x){
+  n<-length(x)
+  p<-plogis(a+b*x)
+  y_star<-rbinom(n,size = 1,prob = p)
+  q<-pi*(1-y_star)+(1-pi)*y_star
+  y<-rbinom(n, size = 1, prob = q)
+}
+
+```
+
+
+2. Generate a vector `x_fixed` that contains `250` standard normal draws. To keep life simple, we will hold this vector *fixed* throughout the simulations that follow: do *not* draw new values for `x_fixed` in any of the following. Using `x_fixed` and the function `noisy_logit()` from the preceding part, carry out a simulation study to see how mis-classification affects the mean and standard deviation of the sampling distribution of the logistic regression estimators of $(\widehat{\alpha}, \widehat{\beta})$. Fix $\alpha = -1$ and $\beta = 2$ throughout, and consider a grid of values for the mis-classification probability: $\pi \in \{0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30\}$. Plot your results and discuss briefly. What do you conclude about measurement error in a binary outcome variable?
+
+As we observe from both the data table and the graphical evidence, when increasing the noise in our dependent variable we notably increase the bias in the estimation of both alpha and beta (as expected by the theory). "Surprisingly" we observe a reduction of the standard deviation of our estimates. My hypothesis is that as we increase the noise, our coefficients move towards zero,as they suffer from attenuation bias. In that sense, although our estimation becomes more and more biased, we end up "precisely" estimating a zero effect of our covariates.
+
+Finally, in terms of mean square error (MSE), the traditional bias-variance tradeoff, suggests an increase in MSE given that bias contributes quadratically to the MSE. 
+
+```{r}
+## Data
+set.seed(1234)
+x_fixed<-rnorm(250)
+pi_expand<-seq(0,0.3, 0.05)
+
+## Model sampling takes a logit regression based on the
+## output generated in `noisy_logit()` and stores the results
+
+model_sampling<-function(pi, a, b, x = x_fixed){
+  y<-as.vector(noisy_logit(pi, a, b, x))
+  model<-glm(y ~ x, family = binomial(link = "logit"))
+  c(alpha_hat = coefficients(model)[1],
+    beta_hat = coefficients(model)[2])
+}
+
+## Model distribution replicates `model_sampling()` for
+## a given set of parameters and stores some descriptive
+## statistics of the distribution
+
+model_dist<-function(nrep = 10000, pi, a, b, x = x_fixed){
+  reps<-replicate(nrep, model_sampling(pi, a, b, x))
+  c(avg_alpha = mean(reps[1,]),
+    sd_alpha = sd(reps[1,]),
+    avg_beta = mean(reps[2,]),
+    sd_beta = sd(reps[2,]))
+  }
+  
+## Results Maps model_dist across a grid of pi values
+results<-Map(model_dist, pi = pi_expand, a=-1, b=2)
+results<-do.call(rbind, results)
+results<-cbind(pi_expand, results)
+results
+
+## Plot answers
+results %>% as.data.frame() %>% ggplot() +
+  geom_line(aes(x=pi_expand, y = abs(avg_alpha + 1)), color = "red")+
+  geom_line(aes(x=pi_expand, y = sd_alpha), color = "blue")+
+  geom_line(aes(x=pi_expand, y = abs(avg_beta-2)),
+                color = "red", linetype = "dashed")+
+  geom_line(aes(x=pi_expand, y = sd_beta), color = "blue", linetype = "dashed")+
+  theme_bw()+
+  xlab("Probability of mis-classification") +
+  ylab("Bias/Standard Deviation") +
+  labs(caption = "Bias = Red, SD = Blue. Alpha = Solid, Beta = Dashed")
+
+```
+
+3. Unless $\pi = 0$, the case of no mis-classification, $Y_i|X_i$ does *not* follow a logistic regression model. Use the law of total probability to derive an expression for $P(Y_i=1|X_i)$ in terms of $(\pi, \alpha, \beta)$ in the general case where $\pi$ may not equal zero. Then use your result to derive the conditional log-likelihood function for the observed data as a function of the parameters $(\pi, \alpha, \beta)$. **This is your chance to learn how to type up mathematics using LaTeX!**
+
+$$
+\begin{aligned}
+P(Y_i = 1 | X_i) &= P(Y_i^* = 1 | X_i)(1-\pi) + P(Y_i^*=0 | X_i)\pi\\
+ &= \textbf{plogis}(\alpha + \beta X_i)(1-\pi) + 1-\textbf{plogis}(\alpha + \beta X_i)\pi\\
+ &= (1-\pi)\frac{1}{1+ e^{-\alpha - \beta X_i}} + 1 - \pi\frac{1}{1+ e^{-\alpha - \beta X_i}}\\
+ &=(1-\pi)\frac{1}{1+ e^{-\alpha - \beta X_i}} + \pi \frac{e^{-\alpha - \beta X_i}}{1+ e^{-\alpha - \beta X_i}} \\
+\end{aligned}
+$$
+Likelihood function $:= \mathcal{L}(\cdot \vert  \pi, \alpha, \beta)$
+
+$$
+\begin{aligned}
+ \mathcal{L}(Y_i \vert  \pi, \alpha, \beta) &= \prod_{i}P(Y_i| X_i) \\
+ &= \prod_{i:Y_i=1}P(Y_i = 1 | X_i) \cdot \prod_{i:Y_i=0}P(Y_i = 0 | X_i)\\
+ &=\prod_{i:Y_i=1}P(Y_i = 1 | X_i) \cdot \prod_{i:Y_i=0}(1-P(Y_i = 1 | X_i)) \\
+ &=\prod_{i}\Bigg((1-\pi)\frac{1}{1+ e^{-\alpha - \beta X_i}} + \pi \frac{e^{-\alpha - \beta X_i}}{1+ e^{-\alpha - \beta X_i}}\Bigg)^{Y_i} \cdot \\
+ & \Bigg(1-(1-\pi)\frac{1}{1+ e^{-\alpha - \beta X_i}} - \pi \frac{e^{-\alpha - \beta X_i}}{1+ e^{-\alpha - \beta X_i}}\Bigg)^{1-Y_i}\\
+\end{aligned}
+$$
+Finally, define the log-likelihood as $\log(\mathcal{L})$
+
+$$
+\begin{aligned}
+ \log(\mathcal{L}) &= \sum_{i:Y_i=1}\log\Bigg((1-\pi)\frac{1}{1+ e^{-\alpha - \beta X_i}} + \pi \frac{e^{-\alpha - \beta X_i}}{1+ e^{-\alpha - \beta X_i}}\Bigg) +\\
+& \sum_{i:Y_i=0}\log\Bigg(1-(1-\pi)\frac{1}{1+ e^{-\alpha - \beta X_i}} - \pi \frac{e^{-\alpha - \beta X_i}}{1+ e^{-\alpha - \beta X_i}}\Bigg)
+\end{aligned}
+$$
+
+## Problem \#3 - Simulating the Bivariate Normal Distribution
+
+Write an R function called `rbinorm()` that uses `rnorm()` to generate draws from a *bivariate*, i.e. two-dimensional, normal distribution. Your function should take three arguments: `n_draws` is the number of simulation draws, `mean_vec` is a vector of length two specifying the mean of each component, and `var_mat` is a $(2\times 2)$ variance-covariance matrix. Read the documentation for the R function `stopifnot()` and use it to throw an error if `var` is not positive definite. Your function should return an `nreps` by `2` matrix containing the desired draws. You may *not* use function `chol()`: I want you to do everything "by hand." Check your work by drawing a large number of simulations, calculating the sample means and variance-covariance matrices, and plotting the marginal and joint distribution.
+
+```{r}
+rbinorm<-function(n_draws, mean_vec, var_mat){
+  stopifnot("The var-covar matrix must be positive definite"= var_mat[1,1]>0,
+            "The var-covar matrix must be positive definite"=det(var_mat)>0)
+  # Building A
+  a<-sqrt(var_mat[1,1])
+  b<-0
+  c<-var_mat[1,2]/sqrt(var_mat[1,1])
+  d<-sqrt(var_mat[2,2]-var_mat[1,2]^2/var_mat[1,1])
+  
+  A<-matrix(c(a,b,c,d), ncol = 2, byrow = T)
+  
+  # Generating the normal draws as basis of our bivariate normal
+  z1<-rnorm(n_draws)
+  z2<-rnorm(n_draws)
+  
+  z<-cbind(z1,z2)
+  colnames(z)<-c("z1", "z2")
+  
+  # Initializing x
+  x<-matrix(NA, nrow = n_draws, ncol=2)
+  for (i in 1:n_draws){
+    x[i,]<-t(A %*% z[i,]) + mean_vec
+  }
+  
+  x<-x %>% as.data.frame()
+  colnames(x)<-c("x1", "x2")
+  x
+}
+
+mean_vector_test<-c(-2,5)
+var_mat_test<-matrix(c(10,2,2,6), ncol =2, byrow = TRUE)
+var_mat_test_wrong<-matrix(c(1,2,2,-4), ncol =2, byrow = TRUE)
+```
+
+
+```{r, error=TRUE}
+rbinorm(n_draws = 10000, mean_vector_test, var_mat_test_wrong)
+```
+
+
+```{r}
+## Testing our program
+rbinorm_draws<-rbinorm(10000, mean_vector_test, var_mat_test)
+colMeans(rbinorm_draws)
+var(rbinorm_draws)
+
+## Marginal Distribution
+rbinorm_marginals <- rbinorm_draws %>% ggplot() +
+  geom_density(aes(x1), fill = 'black', alpha = 0.5) +
+  geom_density(aes(x2), fill = 'orange', alpha = 0.5)
+
+rbinorm_joint <- rbinorm_draws %>% ggplot() +
+  geom_density2d_filled(aes(x1, x2)) +
+  coord_fixed()
+
+grid.arrange(rbinorm_marginals, rbinorm_joint, ncol = 2)
+
+```
+
