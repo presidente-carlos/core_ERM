@@ -41,7 +41,7 @@ library(gridExtra)
 library(modelsummary)
 
 ##For knitting
-tinytex::install_tinytex()
+#tinytex::install_tinytex()
 ```
 
 
@@ -54,7 +54,7 @@ tinytex::install_tinytex()
       
 Comments:
 
-b) At first glance, the `arsenic`variable follows almost a perfect declining exponential distribution. This is, there are many wells with low arsenic levels and very few ones with very large values. When taking logs our distribution moves towards a more "uniform" looking distribution, although it remains skewed to the right.
+b) At first glance, the `arsenic` variable follows almost a perfect declining exponential distribution. This is, there are many wells with low arsenic levels and very few ones with very large values. When taking logs our distribution moves towards a more "uniform" looking distribution, although it remains skewed to the left.
       
 ```{r}
 ## Import data
@@ -85,7 +85,7 @@ wells<-wells %>% mutate(dist100 = dist/100,
 
 Comments:
 
-c) Distance seems to have a negative significant effect on the probability of switching. This result is consistent with our expectations as suggests that the larger the distance between respondent's location and a healthy well has a negative effect on the probability that that family changes its selected well.
+c) Distance seems to have a negative significant effect on the probability of switching. This result is consistent with our expectations as suggests that the larger the distance between respondent's location and a healthy well the lower the probability of that family changing well.
 
 d) The predicted probability of switching at the distance average household is of 0.58
 
@@ -137,6 +137,7 @@ print(paste("The average marginal effect is",
       (f) Comment on your results from (c) and (e). In particular, compare them to the error rate that you would obtain by simply predicting the *most common* value of `switch` for every observation in the dataset. (This is called the "null model" since it doesn't use any predictors.)
       
 Comments:
+
 f) We observe a very high error rate (of over 40%). When looking more closely into the confusion matrix, we observe how our model is essentially predicting that "everybody" is switching wells. In prediction language, our prediction mechanism has a very high sensitivity but very low specificity. 
 
 To evidence that our model is not doing a great job in making predictions, we can compare it to the the null-model which predicts that everybody is switching wells (given that switching is the most likely outcome). The null-model obtains a 42% error rate, just two points above our one-regressor prediction model.
@@ -328,7 +329,7 @@ noisy_logit<-function(pi, a, b, x){
 
 2. Generate a vector `x_fixed` that contains `250` standard normal draws. To keep life simple, we will hold this vector *fixed* throughout the simulations that follow: do *not* draw new values for `x_fixed` in any of the following. Using `x_fixed` and the function `noisy_logit()` from the preceding part, carry out a simulation study to see how mis-classification affects the mean and standard deviation of the sampling distribution of the logistic regression estimators of $(\widehat{\alpha}, \widehat{\beta})$. Fix $\alpha = -1$ and $\beta = 2$ throughout, and consider a grid of values for the mis-classification probability: $\pi \in \{0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30\}$. Plot your results and discuss briefly. What do you conclude about measurement error in a binary outcome variable?
 
-As we observe from both the data table and the graphical evidence, when increasing the noise in our dependent variable we notably increase the bias in the estimation of both alpha and beta (as expected by the theory). "Surprisingly" we observe a reduction of the standard deviation of our estimates. My hypothesis is that as we increase the noise, our coefficients move towards zero,as they suffer from attenuation bias. In that sense, although our estimation becomes more and more biased, we end up "precisely" estimating a zero effect of our covariates.
+As we observe from both, the data table and the graphical evidence, when increasing the noise in our dependent variable we notably increase the bias in the estimation of both alpha and beta (as predicted by the theory). "Surprisingly" we observe a reduction of the standard deviation of our estimates. My hypothesis is that as we increase the noise, our coefficients move towards zero,as they suffer from attenuation bias. In that sense, although our estimation becomes more and more biased, we end up "precisely" estimating a zero effect of our covariates.
 
 Finally, in terms of mean square error (MSE), the traditional bias-variance tradeoff, suggests an increase in MSE given that bias contributes quadratically to the MSE. 
 
