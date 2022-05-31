@@ -1,0 +1,214 @@
+---
+title: 'Core ERM Problem Set #5'
+author: "2937141"
+date: "Thursday, June 2nd"
+output: pdf_document
+fontsize: 12pt
+---
+
+Because week 5 of Core ERM consisted of a series of guest lectures rather than our regularly-scheduled programming exercises, this problem set is a bit different from usual. I have written a short tutorial on text data in R and posted it here: <https://empirical-methods.com/text-data.html>. The tutorial has six sections, each of which has one exercise. Departing from our usual convention, I have *not* provided solutions to the exercises. Your problem set assignment is to work through the tutorial and submit solutions to the exercises.
+
+```{r, echo = FALSE}
+# Load libraries
+libraries <- c("tidytext", "tidyverse", "gutenbergr", "wordcloud",
+               "SnowballC", "readr", "modelsummary", "janeaustenr",
+               "tm", "stringr")
+
+for (i in libraries){
+eval(bquote(library(.(i))))
+}
+
+#tinytex::install_tinytex() ## To be able to knit my document
+```
+
+
+## Exercise 1
+Create a character vector called `crocodile` by typing out the eight lines of the poem [How Doth the Little Crocodile](https://en.wikipedia.org/wiki/How_Doth_the_Little_Crocodile) from Alice in Wonderland by Lewis Carroll. The length of `crocodile` should be 8 so that each element of the vector corresponds to a line of the poem. After creating this vector, follow the same procedure as we used above for `tyger` to create a tibble with columns `line` and `word` in which each *row* is a token from `crocodile`. Inspect your results. What happened to the two exclamation points in the poem, and why is the word "Nile" no longer capitalized?
+
+The exclamation marks (as well as the rest of the punctuation symbols) have been removed from our final display. Moreover, capital letters have been trimmed and consequently Nile is no longer capitalized.
+
+```{r}
+
+crocodile<-c("How doth the little crocodile",
+             "Improve his shining tail",
+             "And pour the waters of the Nile",
+             "On every golden scale!",
+             "How cheerfully he seems to grin,",
+             "How neatly spreads his claws,",
+             "And welcomes little fishes in",
+             "With gently smiling jaws!")
+
+crocodile_tbl<-tibble(line = seq_along(crocodile), 
+                      text = crocodile)
+
+crocodile_tbl %>% 
+  unnest_tokens(output = row, input = text)
+
+```
+## Exercise 2
+
+Visit [Project Gutenberg](https://www.gutenberg.org/) and find the id for David Ricardo's [On the Principles of Political Economy and Taxation](https://en.wikipedia.org/wiki/On_the_Principles_of_Political_Economy_and_Taxation). Follow the steps from above to make a word cloud for this book, and compare it to the one we made for The Wealth of Nations. You may need to adjust the argument `min.freq` in `wordcloud()` to obtain a wordcloud with a similar number of words.
+
+```{r}
+my_mirror <- "http://mirrors.xmission.com/gutenberg/"
+ricardo <- gutenberg_download(33310, mirror = my_mirror)
+```
+
+```{r}
+tidy_ricardo <- ricardo %>%
+                unnest_tokens(output = word, input = text) %>%
+                anti_join(stop_words) %>%
+                count(word, sort = TRUE)
+
+head(tidy_ricardo)
+
+tidy_ricardo %>% with(wordcloud(word, n, min.freq = 150))
+```
+
+## Exercise 3
+
+Repeat the exercise from above in which you made a word cloud for Ricardo's On the Principles of Political Economy and Taxation, but this time work with stems rather than words and remove numeric tokens. How do the results change?
+
+Our results vary in at least the following ways:
+First, the word is not the analysis token anymore but the stem, as a result, most words have lost their grammatical morphemes. Moreover, many words have been combined into a single stem (such as the word product and production). Finally, because of this process, the word count of each stem has increased. As a side note, bear in mind that we have also removed numbers from our analysis, but given that these did not feature in our previous wordcloud, we see no differences in this regard.
+
+```{r}
+
+stem_ricardo <- ricardo %>%
+                unnest_tokens(output = word, 
+                              input = text,
+                              strip_numeric = TRUE) %>%
+                anti_join(stop_words) %>%
+                mutate(stem = wordStem(word)) %>%
+                count(stem, sort = TRUE)
+
+stem_ricardo %>% with(wordcloud(stem, n, min.freq = 250))
+
+```
+
+## Exercise 4
+
+Peter Norvig maintains a website with data from the [Google Web Trillion Word Corpus](https://ai.googleblog.com/2006/08/all-our-n-gram-are-belong-to-you.html). The file `count_1w.txt` available from <http://norvig.com/ngrams/> contains a list of the 1/3 million most common words in this corpus along with their counts.
+
+  a) Read `count_1w.txt` into a tibble called `norvig` using `read_delim()` from the `readr` package. I suggest setting meaningful column names using the argument `col_names`.
+
+  b) Use `norvig` to make a plot with the log rank on x-axis and log count on the y-axis. If these data come from a Zipf distribution, what shape should this relationship take?
+  
+  If the data were to follow a Zip distribution we would expect the first word to be twice as abundant as the second one and so on. This is, we would expect the rank and count to follow a quasi-perfect exponential curve. When taking logs, we expect this relation to be linear. In fact, this is what we observe in the data.
+
+  c) Fit an appropriate linear regression to assess whether the counts and ranks from `norvig` are consistent with Zipf's law.
+  
+  According to our linear regression, the distribution of our data is compatible with a Zipf's distribution $Z(\hat{\alpha }= 0.646))$ where $\hat{\alpha}$ is the MLE of $\alpha$.
+
+```{r}
+
+norvig<-read_delim("http://norvig.com/ngrams/count_1w.txt",
+                     col_names = FALSE) %>%
+        as_tibble() %>%
+        rename("word" = X1, "count" = X2)
+
+## Attach rank to tibble
+norvig$rank<-1:nrow(norvig)
+
+norvig<-norvig %>%  mutate(log_rank = log(rank),
+                           log_count = log(count))
+
+## Plot
+norvig %>% ggplot() +
+           geom_point(aes(x=log_rank, y = log_count)) +
+           labs(x = "Log(rank)",
+                y = "Log(count)") +
+           theme_classic()
+
+## Regression and display
+reg<-lm(log_count ~ log_rank, data = norvig)
+modelsummary(list(reg),              
+             fmt = 3,
+             stars = T,
+             gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC',)
+```
+## Exercise 5
+
+Above we used `bind_tf_idf()` to calculate the tf-idf for `austen_words`. Suppose you didn't have access to this helpful function. You could nonetheless calculate the tf-idf if `austen_words` "by hand" using `dplyr` . Write code to accomplish this, and make sure that your results match those from above.
+
+```{r}
+## Import data
+austen_words <- austen_books() %>%
+                unnest_tokens(word, text) %>%
+                count(book, word, sort = TRUE)
+
+## Collapse data to get access to colsums by group
+documents_term<-austen_words %>% group_by(word) %>%
+                summarize(documents_term = length(book)) ## By word
+words_by_book<- austen_words %>% group_by(book) %>%
+                summarize(words_by_book = sum(n)) ## By book
+
+## Merge information back and generate variables
+austen_words <-austen_words %>% merge(documents_term, by = "word") %>%
+               merge(words_by_book, by = "book") %>%
+               mutate(tf = n/words_by_book,
+                      documents = n_distinct(book),
+                      idf = log(documents/documents_term),
+                      tf_idf = tf*idf) %>%
+               arrange(desc(tf_idf))
+
+head(austen_words)
+
+```
+## Exercise 6
+
+What are the ten "most important" words in Federalist Papers number 12 and 24 as measured by tf-idf? Does it matter whether you work with words or stems?
+
+*Note 1:* It is unclear from the exercise whether we should treat Papers 12 and 24 as the corpus or whether we should simply apply this constraint at the very end of our analysis. I have opted for the latter.
+*Note 2:* I have decided not to make any pre-trimming, by fully relying on the fact that tf-idf should take care of stopwords and others.
+
+There are little variations when stemming vs not-stemming, however, we can see some sort of pattern. In particular, words which tend to have many derivations like simple nouns and verbs perform higher under tf-idf when stemming.
+
+```{r}
+## Import data
+federalist_raw <- VCorpus(ZipSource('https://ditraglia.com/data/federalist.zip', 
+                                    recursive = TRUE))
+## Overall formatting
+federalist <- tidy(federalist_raw, collapse = '') %>%
+              select(id, text) %>%
+              mutate(paper = as.numeric(str_extract(id, '[:digit:]+'))) %>%
+              select(paper, text)
+
+## Not stemmed
+federalist_not_stem<- federalist %>%
+                      unnest_tokens(word, text) %>%
+                      mutate(stem = word) %>%
+                      count(stem, paper, sort = TRUE)
+## Stemmed
+federalist_stem <- federalist %>%
+                   unnest_tokens(word, text) %>%
+                   mutate(stem = wordStem(word)) %>%
+                   count(stem, paper, sort = TRUE)
+
+## Bind_tf_it and final display
+comparison_table<-matrix(NA, ncol = 4, nrow = 10)
+i<-1
+
+for (number in c(12, 24)){
+  for (dataset in list(federalist_not_stem, federalist_stem)){
+    comparison_table[,i]<-
+      dataset %>%
+      bind_tf_idf(stem, paper, n) %>%
+      filter(paper == number) %>%
+      arrange(desc(tf_idf)) %>%
+      slice_head(n=10) %>%
+      select(stem) %>%
+      as_vector()
+    
+    i<-i+1
+  }
+}
+
+comparison_table <- comparison_table %>% as_data_frame()
+colnames(comparison_table) <-c("Not stem 12", "Stem 12",
+                               "Not stem 24", "Stem 24")
+
+comparison_table
+
+```
+
