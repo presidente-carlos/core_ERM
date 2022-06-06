@@ -1,0 +1,393 @@
+---
+title: 'Core ERM Problem Set #6'
+author: "2937141"
+date: "June 9th"
+output: pdf_document
+fontsize: 12pt
+---
+
+```{r, results='hide', message=FALSE}
+##For knitting
+#tinytex::install_tinytex()
+
+#Libraries
+library(tidyverse)
+library(wooldridge)
+library(estimatr)
+library(modelsummary)
+```
+
+
+## Problem \#1
+
+Let $Z \sim \text{Bernoulli}(\pi)$ independently of $X \sim \text{iid Poisson}(\lambda)$. Then the random variable $Y \equiv (1 - Z) X$ follows what is called a **zero-inflated Poisson** distribution with parameters $\pi$ and $\lambda$. Compared to a garden-variety Poisson distribution with rate $\lambda$, the zero-inflated Poisson is more likely to generate a count of zero. This makes it a useful model for the many real-world datasets that are *almost* Poisson but have "too many zeros." (I've been told that this is a fairly good model for football, i.e. soccer, scores!) In this question you'll simulate a zero-inflated Poisson random variable, derive some of its properties, and develop an iterative procedure to estimate its parameters via maximum likelihood.
+
+1. Write a function called `rzipois()` to simulate `n` draws from a zero-inflated Poisson distribution. It should take three arguments `n`, `pi`, and `lambda`, corresponding to the description from above.
+
+```{r}
+rzipois<-function(n, pi, lambda){
+  z = rbinom(n = n, size = 1, prob = pi)
+  x = rpois(n = n, lambda = lambda)
+  y = (1-z)*x
+}
+```
+
+
+2. Write a function called `dzipois()` that calculates the probability mass function of a zero-inflated Poisson random variable. It should take three arguments `y`, `pi`, and `lambda`. The last two arguments, `pi` and `lambda`, are the parameters of the zero-inflated Poisson distribution. The argument `y` is a vector of non-negative integer values at which `dzipois()` will evaluate the probability density function.
+
+First, we need to derive the densities of the zero-inflated poisson. Observe that
+$$P(Y=0) = \pi + (1-\pi)e^{-\lambda}$$
+
+and
+
+$$P(Y=y_i | y_i \neq 0) = (1-\pi)\frac{e^{-\lambda}\lambda^{y_i}}{y_i!}$$
+
+For numerical convenience we might want to compute the density of $y_i\neq0$ in logs. i.e:
+
+$$\log(P(Y=y_i | y_i \neq 0)) = \log(1-\pi) -\lambda + y_i\log\lambda - \log(y_i!)$$
+
+```{r}
+dzipois<-function(y, pi, lambda){
+  #Initialise density = 0 (we will keep adding)
+  density = 0
+  if(any(y)<0){break} #As it would be incompatible
+                      #with zero-inf poisson data
+                      #and returns density of zero
+  
+  for (i in 1:length(y)){ #code can take vector of y's as argument
+    if(y[i] == 0){
+      density = density + pi+(1-pi)*exp(-lambda)
+    }else if(y[i]>0){
+      density = density + exp(log(1-pi) - lambda +
+                              y[i]*log(lambda)-lfactorial(y[i]))
+    }
+  }
+  density
+}
+```
+
+
+3. Derive the mean and variance of a zero-inflated Poisson distribution in terms of $\pi$ and $\lambda$. Check your work against the sample mean and variance of a 100,000 simulation draws from `rzipois()` with $\lambda = 5$ and $\pi = 0.2$.
+
+$$
+\begin{aligned}
+\mathbb{E}[Y] & =  \mathbb{E}[Y | y_i=0]P(y_i=0) + \mathbb{E}[Y | y_i\neq0]P(y_i\neq0) \\
+& = \mathbb{E}[Y | y_i\neq0]P(y_i\neq0) \\
+& = \sum_{n=1}^\infty n(1-\pi)\frac{e^{-\lambda}\lambda^{n}}{n!} \\
+& = (1-\pi)\lambda\\
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+\mathbb{E}[Y^2] & = \mathbb{E}[Y^2 | y_i=0]P(y_i=0) + \mathbb{E}[Y^2 | y_i\neq0]P(y_i\neq0) \\
+& =\mathbb{E}[Y^2 | y_i\neq0]P(y_i\neq0) \\
+& =\sum_{n=1}^\infty n^2(1-\pi)\frac{e^{-\lambda}\lambda^{n}}{n!} \\
+&=(1-\pi)(\lambda^2+\lambda)\\
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+\text{Define Var}(Y) &= \mathbb{E}[Y^2] - \mathbb{E}[Y]^2 \\
+\text{It follows Var}(Y)&= (1-\pi)(\lambda^2+\lambda) - (1-\pi)^2\lambda^2 \\
+& = (1-\pi)(\lambda^2+\lambda-\lambda^2+\pi\lambda^2) \\
+& = \lambda(1-\pi)(1+\pi\lambda)
+\end{aligned}
+$$
+```{r}
+check_zipois<- function(pi, lambda){
+  
+  theory = c(mean = (1-pi)*lambda,
+             var = lambda*(1-pi)*(1+lambda*pi))
+  empirical_draws = rzipois(100000, pi, lambda)
+  empirical = c(mean(empirical_draws),
+                var(empirical_draws))
+  
+  comparison = cbind(theory, empirical)
+  rownames(comparison) = c("Mean", "Variance")
+  
+  comparison
+}
+check_zipois(pi = 0.2, lambda = 5)
+```
+
+4. Use your derivations from the preceding part to solve for $\lambda$ and $\pi$ in terms of $\text{E}(Y)$ and $\mathbb{E}(Y^2)$. Use the result to propose method of moments estimators for the parameters of a zero-inflated Poisson distribution. Check your work using a the simulation draws from the preceding part. **Hint:** start by calculating $\text{Var}(Y)/\mathbb{E}(Y)$ and combining the result with your expression for $\mathbb{E}(Y)$ from above to obtain an expression for $\lambda$.
+
+$$
+\begin{aligned}
+&\text{Note that} & \text{Var}(Y)/\mathbb{E}(Y) = \mathbb{E}(Y^2)/\mathbb{E}(Y)-\mathbb{E}(Y) = 1 + \lambda\pi \\
+&\text{From (3)}& \mathbb{E}(Y) = (1-\pi)\lambda = \lambda-\lambda\pi\\
+&\text{Hence}& \hat\lambda = \mathbb{E}(Y) + \lambda\pi = \mathbb{E}(Y) + \mathbb{E}(Y^2)/\mathbb{E}(Y)-\mathbb{E}(Y) - 1 = \mathbb{E}(Y^2)/\mathbb{E}(Y) -1 \\
+&\text{Finally}& \hat\pi = \frac{\mathbb{E}(Y^2)/\mathbb{E}(Y)-\mathbb{E}(Y)-1}{\mathbb{E}(Y^2)/\mathbb{E}(Y)-1} = \frac{\mathbb{E}(Y^2)-\mathbb{E}(Y)^2-\mathbb{E}(Y)}{\mathbb{E}(Y^2) - \mathbb{E}(Y)}
+\end{aligned}
+$$
+
+```{r}
+check_mm<-function(pi, lambda){
+ 
+  # Make some draws
+  empirical_draws = rzipois(10000, pi, lambda)
+  
+  # Compute E[y] and E[y^2]
+  exp_y = mean(empirical_draws)
+  exp_y_sq = sum(empirical_draws^2)/length(empirical_draws)
+  
+  # Compute MM estimator
+  lambda_hat = exp_y_sq/exp_y - 1
+  pi_hat = (exp_y_sq - exp_y^2 - exp_y)/(exp_y_sq-exp_y)
+  
+  #Display
+  tibble(MM = c(lambda_hat, pi_hat),
+         True = c(lambda, pi))
+}
+check_mm(0.2, 5)
+```
+
+
+5. The method of moments estimators you derived in the preceding part are *not* the maximum likelihood estimators for $\pi$ and $\lambda$. In this part you will write code to calculate the MLE for a zero-inflated Poisson distribution using a procedure called the [**EM Algorithm**](https://en.wikipedia.org/wiki/Expectation%E2%80%93maximization_algorithm). We begin by writing down the **complete data log-likelihood**:
+
+$$
+\ell(\pi, \lambda) = \sum_{i=1}^n (1 - Z_i)\left[ \log\, \text{dpois}(Y_i, \lambda)  + \log(1 - \pi)\right] + \sum_{i=1}^n Z_i \log (\pi)
+$$
+
+This is the *joint likelihood* for $(Y_i, Z_i)$ in a "pretend" version of our zero-inflated Poisson problem in which we suppose that both $Y_i$ and $Z_i$ are observed for each $i$. Next we take the conditional expectation of $\mathbf{\ell}(\pi, \lambda)$ given the data that we *actually observe*, namely $\mathbf{Y} \equiv (Y_1, Y_2, ..., Y_n)$, yielding
+$$
+\mathbb{E}[\ell(\pi, \lambda)|\mathbf{Y}]  = \sum_{i=1}^n (1 - \xi_i)\left[\log \, \text{dpois}(Y_i, \lambda)  + \log(1 - \pi)\right] + \sum_{i=1}^n \xi_i \log (\pi).
+$$
+using the shorthand $\xi_i \equiv \mathbb{E}[Z_i|Y_i] = \mathbb{P}(Z_i=1|Y_i)$. The EM algorithm alternates between calculating $\xi_i$ from a set of proposed parameter values $\tilde{\pi}$ and $\tilde{\lambda}$, the "E-step," and *updating* these parameters by maximizing the expected log likelihood after substituting the values for $\xi_i$ computed using the *old* parameter values, the "M-step." Iterating this procedure until convergence gives the maximum likelihood estimates.
+     (a) Suppose that we knew $\xi_i$ for each $i$. Derive closed form expressions for the values of $\pi$ and $\lambda$ that maximize the expected log-likelihood. This is the "M-step."
+     
+In practice, we would need to take first derivatives wrt to $\lambda$ and $\pi$ and then check that our likelihood is indeed being maximized through second derivatives. Here, for simplicity, we just reproduce the first order condition.     
+
+$$
+ \frac{\partial \mathbb{E}[\ell(\pi, \lambda)|\mathbf{Y}]}{\partial \lambda} : \hat\lambda = \frac{\sum_i(1-\xi_i)y_i}{\sum_i(1-\xi_i)} 
+$$     
+Similarly
+
+$$
+\frac{\partial \mathbb{E}[\ell(\pi, \lambda)|\mathbf{Y}]}{\partial \pi} : \hat\pi = \frac{\sum_i\xi_i}{\text{N}} \\
+\text{where N is the number of observations}
+$$
+     (b) Suppose that we knew $\pi$ and $\lambda$. Use Bayes' Theorem to derive a closed-form expression for $\xi_i$ as a function of $(\pi, \lambda)$. This is the "E-step."
+     
+Observe that whenever $Y_i\neq0$, $P(Z_i=1|Y_i)=0$. Hence our expression simplifies in the following way.
+
+$$
+P(Z_i=1|Y_i) = \Bigg\{
+    \begin{array}{cr}
+        0 & \text{if} \hspace{2mm}Y_i \neq 0 \\
+        \frac{\pi}{\pi+(1-\pi)e^{-\lambda}} & \text{if}\hspace{2mm} Y_i = 0
+\end{array}
+$$
+     (c) Write code to implement the EM algorithm. Begin by setting starting values $(\pi_0, \lambda_0)$. Then carry out the E-step using these starting values to obtain $\xi_i$. Using the values of $\xi_i$ from the E-step, carry out the M-step to obtain new parameter values $(\pi_1, \lambda_1)$. This is one complete iteration of the EM algorithm. Repeat this process, each time using the previous parameter values $(\pi_{\text{old}}, \lambda_{\text{old}})$ to calculate $\xi_i$ in the E-step, and updated parameter values $(\pi_{\text{new}}, \lambda_{\text{new}})$ in the M-step. Run the algorithm for 100 iterations.
+     
+```{r}
+em<-function(iterations = 100, start_values = c(0.5, 5), pi, lambda){
+  pi_0 =     start_values[1]
+  lambda_0 = start_values[2] 
+  
+  for (i in 1:iterations){
+    xi = ifelse(y!=0, 0, pi_0/(pi_0+(1-pi_0)*exp(-lambda_0)))
+    pi_0 = sum(xi)/length(y)
+    lambda_0 = sum((1-xi)*y)/sum(1-xi)
+  }
+  
+  tibble(start_values = start_values,
+         em_algorithm = c(pi_0, lambda_0),
+         true_par = c(pi, lambda))
+}
+```
+     (d) Calculate the MLE for $\pi$ and $\lambda$ based on the simulation draws from above using your code from the preceding part.
+    
+As you can see below, we obtain almost perfect approximations of the true parameters even with suboptimal starting values.
+    
+```{r}
+em_master<-function(n, start_values, pi, lambda){
+  y <<- rzipois(n, pi, lambda)
+  em(100, start_values, pi, lambda)
+}
+em_master(10000, start_values = c(0.5, 5), pi = 0.2, lambda = 4)
+```
+
+## Problem \#2
+
+1. Simulate 500 observations from a logistic regression model with $X_i \sim \text{N}(0,1)$ and $\mathbb{P}(Y_i = 1|X_i) = \texttt{plogis}(\alpha + \beta X_i)$ with parameter values $\alpha = -0.5$ and $\beta = 1$.
+2. Use `glm()` to calculate the maximum likelihood estimates for $\alpha$ and $\beta$ based on the simulation data from the preceding part.
+3. Write R code to calculate the maximum likelihood estimates "by hand" using `optim()` and BFGS algorithm. Supply a function to `optim()` that calculates the gradient, and experiment with different starting values. How do your results compare to those of the preceding part?
+
+We observe very little variation despite the selected starting values. See below for detailed explanation.
+
+```{r}
+set.seed(1234) # for replicable results
+
+# Simulate some data function
+simulate_sample<-function(n, alpha = -0.5, beta = 1){
+  x = rnorm(n)
+  probs_y = plogis(alpha + beta*x)
+  y = rbinom(n, size =1, prob = probs_y)
+  lsample <<- data_frame(y=y, x=x) # To use later
+}
+
+# Compute logit regression and stores coefficients as starting values in optim()
+logit_glm<-function(data){
+  lreg = data %>% glm(y ~ x, data =., family = binomial(link = "logit"))
+  start_values <<-coefficients(lreg)
+}
+
+# Likelihood function to be optimized
+likelihood_logit<-function(params){
+alpha = params[1]
+beta = params[2]
+  sum(log(1 / (1 + exp(-(alpha + lsample$x*beta))))*lsample$y + 
+    log(1 - 1 / (1 + exp(-(alpha + lsample$x*beta))))*(1 - lsample$y))
+}
+
+# Likelihood gradient
+likelihood_gradient<-function(params){
+alpha = params[1]
+beta = params[2]
+
+c(sum(lsample$y- (1 / (1 + exp(-(alpha + lsample$x*beta))))),
+  sum((lsample$y- (1 / (1 + exp(-(alpha + lsample$x*beta)))))*lsample$x))
+
+}
+
+# Wrap-up previous functions and optimizes them
+master_logit<-function(n){
+  lsample = simulate_sample(n, alpha = -0.5, beta = 1)
+  logit_glm(lsample)
+  by_hand =  optim(par = start_values, # Uses logit coeffs as starting point
+                    fn = likelihood_logit,
+                    gr = likelihood_gradient,
+                    method = 'BFGS',
+                    control=list(fnscale=-1)) # To maximize, rather than minimize
+  # Display
+  tibble(glm = start_values,
+         by_hand = by_hand$par)
+}
+
+master_logit(500)$par ## Our approximation is good but not perfect with 500 obs
+master_logit(1e5)$par ## But we do much better when increasing the number of obs
+
+# Playing around with different starting-values
+ playing <- function(start){
+  by_hand =  optim(par = start,
+                    fn = likelihood_logit,
+                    gr = likelihood_gradient,
+                    method = 'BFGS',
+                    control=list(fnscale=-1)) # To maximize, rather than minimize
+ }
+
+# Grid to loop over, as you can see we select bad result, intermediate results
+# and optimal results
+playing_list = list(bad = c(-10, 10),
+                    interm = c(-2, 2),
+                    optim = start_values)
+
+# Initialize list to store results
+playing_results = list()
+for (i in 1:length(playing_list)){
+  playing_results[[i]] = playing(playing_list[[i]])$par
+}
+
+# Display
+names(playing_results) = names(playing_list)
+playing_results
+```
+
+
+## Problem \#3
+
+This question is adapted from Wooldridge (2010) and uses data from Mullahy (1997), Review of Economics and Statistics, 79, 596-593. To answer it you will need to use the dataset `smoke`, available from the R package `wooldridge.` See `?smoke` for more details about the dataset. For the later parts of this question it may help to consult the slides, videos and notes on Poisson regression available from <https://economictricks.com>.
+
+1. Use a linear regression to predict `cigs`, the number of cigarettes smoked each day, using the regressors log(`cigpric`), log(`income`), `restaurn`, `white`, `educ`, `age`, and `age`$^2$. Interpret your findings. In particular: are cigarette prices and income statistically significant predictors? Does this depend on whether you use robust standard errors?
+
+Despite the large number of regressions, our linear regression model is quite weak in terms of fit. Moreover, only the variables `restaurn`, `educ`, `age` and `age`$^2$ seem to be significant at standard confidence levels. In particular, cigarrete prices and income are not statistically significant regardless the robustness of our errors.
+
+```{r}
+smoke = smoke %>% mutate(log_cigpric = log(cigpric),
+                          log_income = log(income),
+                          age_2 = age^2)
+cig_linear = smoke %>% lm(cigs ~ log_cigpric + log_income +
+                             restaurn + white + educ + age + age_2,
+                           data = .)
+cig_linear_robust = smoke %>% lm_robust(cigs ~ log_cigpric + log_income +
+                             restaurn + white + educ + age + age_2,
+                           data = .)
+modelsummary(list("Linear" = cig_linear,
+                   "Linear-Robust" = cig_linear_robust),
+             stars = T,
+             gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC',
+             title = 'Logit regression smoke dataset')
+```
+
+
+2. Repeat the preceding part but estimate a Poisson regression with an exponential conditional mean function rather than a linear regression. Calculate the APEs for the Poisson model and compare them to the OLS estimates.
+
+Our results are quite similar to those obtained via OLS. Observe, that with the exception of `white` APE effect are a bit larger in absolute terms compared to its OLS analogs.
+
+```{r}
+
+cig_pois = smoke %>% glm(cigs ~ log_cigpric + log_income +
+                             restaurn + white + educ + age + age_2,
+                          data = .,
+                          family = poisson(link = "log"))
+
+# From theory we know that in Poisson Regression APE_i = avg(y_hat)*coef_i
+y_hat = mean(predict(cig_pois, type = 'response')) 
+n_coef = length(coef(cig_linear))
+
+tibble("Variable" = names(coef(cig_linear)[2:n_coef]),
+       "Coefficients OLS" = coef(cig_linear)[2:n_coef],
+       "APE" = y_hat*coef(cig_pois)[2:n_coef])
+
+```
+
+3. Are cigarette prices and income statistically significant in your Poisson regression? Compare to your OLS results from above.
+
+Cigarettes prices remain insignificant under poisson regression but log income becomes highly significant. This is compared to the OLS benchmark regression where none of the indicators were significant at standard confidence levels.
+
+```{r}
+modelsummary(list("Poisson" = cig_pois,
+                  "OL" = cig_linear),
+             stars = T,
+             gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC',
+             title = 'Logit regression smoke dataset')
+```
+
+4. By default, `glm()` uses the "Poisson variance assumption," i.e. it calculates standard errors that assume $\mathbb{E}(Y_i|X_i) = \text{Var}(Y_i|X_i)$. A weaker assumption is the so-called "quasi-Poisson" variance assumption: $\mathbb{E}(Y_i|X_i) = \sigma^2 \text{Var}(Y_i|X_i)$. When $\sigma^2 > 1$ this is called *overdispersion*. When $\sigma^2 < 1$ this is called *underdispersion*. To use standard errors based on the quasi-Poisson assumption in `glm()`, simply replace `family = poisson(link = 'log')` with `family = quasipoisson(link = 'log')`. How does this change your results from the preceding part?
+
+While cigarette price remains insignificant under this new specification, income becomes insignificant under standard confidence levels, just like in the benchmark linear regression model.
+
+```{r}
+cig_qpois = smoke %>% glm(cigs ~ log_cigpric + log_income +
+                             restaurn + white + educ + age + age_2,
+                          data = .,
+                          family = quasipoisson(link = "log"))
+modelsummary(list("Poisson" = cig_pois,
+                  "Quasi-Poisson" = cig_qpois,
+                  "OLS" = cig_linear),
+             stars = T,
+             gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC',
+             title = 'Logit regression smoke dataset')
+```
+5. Calculate an estimate of $\sigma^2$ using the residuals $\widehat{u}_i \equiv Y_i - \exp(X_i'\widehat{\beta})$, in particular
+$$
+\widehat{\sigma}^2 = \frac{1}{n}\sum_{i=1}^n \frac{\widehat{u}_i^2}{\exp(X_i'\widehat{\beta})}
+$$
+Does your estimate suggest evidence of overdispersion or underdispersion?
+
+We observe some overdispersion in our data, this may explain why our quasi-poisson data yields larger standard errors than the benchmark poisson regression model
+
+```{r}
+residuals = residuals(cig_pois)
+sigma_hat = sum(residuals^2)/(nrow(smoke)*mean(smoke$cigs)) 
+
+#Observe that \sum (1/n * exp(X_i'\beta)) is not other thing but
+# the avg_cigs in our sample
+
+sigma_hat
+```
+
+
