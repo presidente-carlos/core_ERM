@@ -1,0 +1,553 @@
+---
+title: 'Core ERM Problem Set #7'
+author: "2937141"
+date: "June 16th"
+output: pdf_document
+fontsize: 12pt
+---
+
+## Problem \#1
+This problem is based on Dehejia \& Wahba (2002; ReStat) "Propensity Score Matching Methods for Nonexperimental Causal Studies." To answer it, you will need two datasets: `nsw_dw.dta` and `cps_controls.dta`. Both of these are available online from `https://users.nber.org/~rdehejia/data/`. In answering the following questions you may find it helpful to consult the [associated paper](https://scholar.archive.org/work/sx5jcokgqfarzfvu3uz2pruzhm/access/wayback/http://users.nber.org/~rdehejia/papers/matching.pdf). While we will not replicate the whole paper, you will be able to compare some of your results to theirs. The file `nsw_dw.dta` contains *experimental data* from the "National Supported Work (NSW) Demonstration, a program that randomly assigned eligible workers to either receive on-the-job training (treatment) or not (control). The dataset contains observations for 445 men, of whom 185 were assigned to the treatment group and 260 were assigned to the control group:
+
+| Name | Description |
+|:-------|:-------------------------------------------------------------|
+| `treat` | Dummy variable: `1` denotes treated, `0` control | 
+| `age` | self-explanatory | 
+| `education` | years of education | 
+| `black` | dummy variable: `1` denotes black | 
+| `hispanic` | dummy variable: `1` denotes hispanic | 
+| `married` | dummy variable: `1` denotes married, `0` unmarried | 
+| `nodegree` | dummy variable: `1` denotes no high school degree | 
+| `re74` | real earnings in 1974 (pre-treatment) | 
+| `re75` | real earnings in 1975 (pre-treatment) | 
+| `re78` | real earnings in 1978 (post-treatment) | 
+
+The file `cps_controls.dta` contains observations of the *same variables* for 15,992 men who were *not* subjects in the NSW experiment. This information is drawn from the Current Population Survey (CPS). Because none of these men were in the experiment, none of them received the treatment. Hence `treat` equals zero for all of them.
+
+Below we will compare treatment effect estimates from the *experimental data* from the NSW with alternatives constructed by applying regression adjustment and propensity score weighing applied to a "composite" sample that includes treated individuals from the NSW and untreated individuals from the CPS. Here's the idea. The NSW was a randomized controlled trial, so we can easily compute an unbiased estimate of the ATE. There's no need for selection-on-observables assumptions, valid instruments, or any other clever identification strategies. But in many real-world situations observational data are all that we have to work with. Can we somehow use the NSW data to see how well various observational methods *would have performed* compared to the experimental ideal? Here's a possible way to accomplish this. The problem of causal inference is one of constructing a valid control group. How would our causal effect estimates change if we replaced the *real* NSW control group with a "fake" control group constructed from the CPS using statistical modeling? The challenge is that NSW participants were not a random sample from the US population, whereas CPS respondents were.
+
+1. Data Cleaning:
+    (a) Load the experimental data from `nsw_dw.dta` and store it in a tibble called `experimental`.
+    (b) Rename `re74` to `earnings74` and do the same for `re75` and `re78`. 
+    (c) Convert the dummy variables `black` and `hispanic` into a single character variable `race` that takes on the values `white`, `black`, or `hispanic`. Hint: use `case_when()` from `dplyr`.
+    (d) Convert `treat`, `nodegree` and `married` from dummy variables to character variables. Choose meaningful names so that each becomes self-explanatory. (E.g. a binary `sex` dummy becomes a character variable that is either `male` or `female`.) 
+    (e) Earnings of zero in a particular year indicate that a person was unemployed. Use this fact to create two variables: `employment74` and `employment75`. Each of these should be a character variable that takes on the value `employed` or `unemployed` to indicate a person's employment status in 1974 and 1975.
+    (f) Drop any variables that have become redundant in light of the steps you carried out above. You can also drop `data_id` since it takes on the same value for every observation in this dataset.
+    
+```{r, results='hide', message=FALSE}
+##For knitting
+#tinytex::install_tinytex()
+
+library(tidyverse)
+library(haven)
+library(modelsummary)
+library(gridExtra)
+library(AER)
+library(MASS)
+```
+
+```{r}
+
+experimental = read_dta("https://users.nber.org/~rdehejia/data/nsw_dw.dta")
+
+clean = function(data){
+  data |>
+  rename(earnings74 = re74, earnings75 = re75,  earnings78 = re78) |>
+  mutate(race = case_when(black == 1 ~ "black",
+                          hispanic == 1 ~ "hispanic",
+                          black == 0 & hispanic == 0 ~ "white"),
+         treat =    ifelse(treat == 1, "treated", "control"),
+         nodegree = ifelse(nodegree == 1, "no_hs", "hs"),
+         married =  ifelse(married == 1, "married", "not_married"),
+         employment74 = ifelse(earnings74 ==0, "unemployed", "employed"),
+         employment75 = ifelse(earnings75 ==0, "unemployed", "employed")) |>
+    dplyr::select(-c(hispanic, black, data_id))
+    #To avoid R from passing MASS pckge select()
+}
+
+experimental = clean(experimental)
+            
+```
+    
+    
+2. Experimental Results:
+    (a) Use `datasummary_skim()` to make two tables of summary statistics for `experimental`: one for the numerical variables and another for the categorical ones.
+    (b) Use `datasummary_balance()` to make a table that compares average values of the variables in `experimental` across treatment and control groups. Comment on the results.
+    (c) Construct an approximate 95\% confidence interval for the average treatment effect of the NSW program based on the data from `experimental`. Interpret your findings.
+    
+Comments:
+
+  (b) We observe how data is fairly balanced in terms of age, education, earnings in 1974, marriage and race (if anything, people in the control group are slightly younger, less educated, are making slightly more money in 1974, are less married and are more hispanic). However, the treated cohort seems to be making substantially more money in 1975 and more so in 1978 than the control cohort. There seems to be important differences as well in terms of high school degree. In particular, the control group is less likely to have a high school diploma. 
+    
+```{r}
+experimental |> datasummary_skim(type = "numeric")
+experimental |> datasummary_skim(type = "categorical")
+
+datasummary_balance(~ treat, experimental)
+```
+    (c) Based on my results on (b) I have decided to provide answers to four different models. One per variable of interest (`earnings75` vs `earnings78`) and two additional specifications controlling by `nondegree`. Results suggest that treatment had no significant effect on `earnings75` at 95\% confidence level, but it had strong positive effects on `earnings78` (even when controlling for `nondegree` disparities).
+    
+```{r}
+exp_reg_75 = lm(earnings75 ~ treat, data = experimental)
+exp_reg_78 = lm(earnings78 ~ treat, data = experimental)
+exp_reg_75_hs = lm(earnings75 ~ treat + nodegree, data = experimental)
+exp_reg_78_hs = lm(earnings78 ~ treat + nodegree, data = experimental)
+
+models = list(exp_reg_75, exp_reg_78, exp_reg_75_hs, exp_reg_78_hs)
+
+# Extracting info from models
+summaries = lapply(models, summary)
+coef = sapply(summaries, function(x) x$coefficients[2,1])
+se = sapply(summaries, function(x) x$coefficients[2,2])
+ci_low = coef - 1.96*se
+ci_high = coef + 1.96*se
+
+tibble(rownames = c("Earnings_1975", "Earnings_1978",
+                      "Earnings_1975_HS", "Earnings_1978_HS"),
+       coefficients = coef,
+       se = se,
+       CI_low = ci_low,
+       CI_high = ci_high) 
+
+```
+
+3. Construct the Composite Sample:
+    (a) Load the CPS data from `cps_controls.dta` and store it in a tibble called `cps_controls`. 
+    (b) Clean `cps_controls` using the same steps that you applied to `experimental` above. (Consider writing a function so you don't have to do the same thing twice!)
+    (c) Use `bind_rows()` from `dplyr` to create a tibble called `composite` that includes *all* of the individuals from `cps_controls` and *only the treated individuals* from `experimental`. 
+    (d) Use `datasummary_balance()` to compare the two groups in `composite`: the treatment group from the NSW and the "controls" from the CPS. 
+    (e) Comment on your findings. What, if anything, does the difference of mean outcomes between the two groups in `composite` tell us about the treatment effect of interest?
+    
+Comments:
+
+(e) As we can see, there seems to be important differences across treatment status in all variables. This fact questions the external validity of our results in (2). In particular, the population of interest across the experimental and non-experimental data seems to widely differ, and consequently, average treatment effects across populations (even if the same experiment was to be conducted on the `cps_controls` data) might differ as well.
+    
+```{r}
+# Read and clean data
+cps_controls = 
+  read_dta("https://users.nber.org/~rdehejia/data/cps_controls.dta")
+cps_controls = clean(cps_controls)
+composite = experimental |> filter(treat == "treated") |>
+  bind_rows(cps_controls)
+
+#Analysis
+datasummary_balance(~treat, data = composite)
+
+```
+    
+4. Regression Adjustment:
+    (a) Regress 1978 earnings on the other variables in `composite` and display the results.
+    (b) Explain how, and under what assumptions, the regression from the preceding part can be used to estimate the treatment effect of interest. If we assume that these assumptions hold, what is our estimate? How does it compare to the experimental results from above?
+    
+Comments:
+
+  (b) To give the results below a causal interpretation we need to enforce a conditional random allocation of treatment. This is, conditioned on covariates, treatment needs to be as if randomly assigned. This condition summarizes traditional assumptions of absence of ommitted variable bias, reverse causality and others. Moreover, implicitly, we are assuming that the true model is linear in covariates, what might not be a fair characterization of the data generating process. If these conditions were to hold (which seems unlikely), our treatment effect would not be significant at standard confidence levels. This is unlike our previous experimental results which suggested a significant positive contribution of treatment towards `earnings78`. 
+    
+```{r}
+reg78_composite = lm(earnings78 ~ ., data = composite)
+modelsummary(reg78_composite,
+             stars = T,
+             gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC')
+```
+    
+   
+5. Propensity Score Weighting
+    (a) Run a logistic regression to estimate the *propensity score* using the data from `composite`. Because `glm()` requires a numeric outcome variable, I suggest creating a tibble called `logit_data` that makes the necessary adjustments beforehand. Think carefully about which variables to include. You don't necessarily have to match the precise specification that the authors use in their paper (although you can if you like: see note A from Table 2) but there is one variable in `composite` that definitely should *not* be included in your model. Which one is it and why?
+    
+Comments:
+    
+  (a) Clearly, we are expected to avoid the inclusion of the variable `earnings78` into the `pscore` creation process, as by definition the `pscore` is the probability of treatment conditioned only on covariates (X). If we were to include the independent variable Y (`earnings78`), matching would be based on `earnings78` as well, leading to reverse causality problems and miss-identification of the causal effect among others.
+    
+```{r}
+logit_data = composite |>
+                mutate(treat = ifelse(treat == "treated",1,0))
+logit_ps = glm(treat ~ .- earnings78,
+               family = binomial(link = "logit"),
+    data = logit_data)
+
+#Pscore
+pscore = predict(logit_ps, type = "response")
+logit_data = cbind(logit_data, pscore)
+
+```    
+  (b) Make two histograms of your estimated propensity scores from the preceding part: one for the treated individuals and one for the untreated. What do your results suggest? (Feel free to make additional plots or compute additional summary statistics to support your argument.)
+    
+```{r}
+treated_pscore = logit_data |>  filter(treat == 1) |>
+                  ggplot() +
+                  geom_histogram(aes(x=pscore), fill = "orange")+
+                  xlab("Propensity Score") +
+                  ggtitle("Treated")+
+                  theme_classic()
+control_pscore = logit_data |> filter(treat == 0) |>
+                  ggplot() +
+                  geom_histogram(aes(x=pscore), fill = "grey")+
+                  xlab("Propensity Score")+
+                  ggtitle("Control")+
+                  theme_classic()
+
+grid.arrange(treated_pscore, control_pscore, ncol = 2)
+
+```    
+Comments:
+    
+  (b) Our results show something that we "already knew" that the two populations (`experimental` and `cps_controls`) are very different from each other. Because only `experimental` population are treated, subjects in `cps_controls` (given that they are very different from the treated population) have, overall, very low likelihood of being treated based on their covariates. Moreover, observe that given the sample unbalancedness, there exists de facto very little variation in our variable `treat` what may push down our propensity scores overall.
+    (c) Calculate the propensity score weighting estimator $\widehat{\text{ATE}}_\text{PSW} = \displaystyle \frac{1}{n} \sum_{i=1}^n \frac{(D_i - \widehat{p}_i)Y_i}{\widehat{p}_i(1 - \widehat{p}_i)}$, where $\widehat{p}_i$ is estimated propensity score for observation $i$, $D_i$ is the treatment, and $Y_i$ is the outcome. (You should obtain a *crazy* result!)
+```{r}
+ate_pscore = function(data){
+ data |> summarize(ate = mean((treat - pscore)*earnings78/(pscore*(1-pscore))))
+}
+ate_pscore(logit_data)
+```
+Comments:
+    
+  (c) Our results seem to suggest that receiving treatment reduces your income by more than 10,000 dollars. This looks crazy!
+  
+  (d) Repeat the preceding part except this time *drop* any observations with a propensity score less than 0.1 or greater than 0.9 before calculating the propensity score weighting estimator. (You should get a *non-crazy* result!)
+```{r}
+logit_data |> filter(pscore>0.1, pscore<0.9)|>
+  ate_pscore()
+```
+Comments:
+    
+  (d) Our results suggest now the non-crazy fact that receiving treatment increases your earnings by around 2,000 dollars. This result is very powerful, as despite the large differences across populations, this filtering was enough to match observations in a reliable way just using propensity scores! (and not covariates).   
+  
+  (e) Can you think of an explanation for the difference in your results between parts (c) and (d) above?
+  
+Comments:
+  
+  (e) Observations with a propensity score close to 0 or 1, threaten our common support assumption. By doing so, our weights become unreliable and our coefficient estimation suffers from consistency problems. "Crazy results" are expected when common support assumption is violated. Once the filtering is in place, PSM is able to reliably match treated and non-treated observations, creating a valid control group within apparently, very different populations.
+
+## Problem \#2
+
+This question is based on a famous paper called "The Colonial Origins of Comparative Development" by Acemoglu, Johnson, and Robinson (**AJR**) published in the *American Economic Review* in 2001. To answer it you will need to download a copy of the paper. You will also need a copy of the dataset `ajr.dta`, which is available from my website at `https://ditraglia.com/data/ajr.dta`. Notice that `ajr.dta` is a STATA file so you'll need to use an appropriate R package to open it. Here is a description of the variables from `ajr.dta` that you'll need below:
+
+| Name | Description |
+|:-------|:-------------------------------------------------------------|
+| `longname` | Full name of country, e.g. Canada | 
+| `shortnam` | Abbreviated country name, e.g. CAN | 
+| `logmort0` | Natural log of early European settler mortality | 
+| `risk` | Avg. protection against expropriation risk 1985-1995 (0 to 10) | 
+| `loggdp` | Natural log of 1995 GDP/capita at purchasing power parity | 
+| `latitude` | Absolute value of latitude (scaled between 0 and 1) | 
+| `meantemp` | 1987 mean annual temperature in degrees Celsius | 
+| `rainmin` | Minimum monthly rainfall | 
+| `malaria` | % of Popn. living where falciparum malaria is endemic in 1994  |
+
+The most important variables are `loggdp`, which is the *outcome* variable ($Y$), `risk` which is the regressor of interest ($X$), and `logmort0`, which AJR propose as an *instrumental variable* ($Z$) for `risk`. Both `loggdp` and `logmort0` are fairly self-explanatory, but `risk` is a bit strange. The *larger* the value of `risk`, the *more* protection a country has against expropriation. In other words, large values of `risk` indicate *better* institutions, as described in the first paragraph of AJR. 
+
+For simplicity we will *not* consider the possibility of heterogeneous treatment effects in this problem. Moreover, because the original AJR paper does not report robust standard errors, feel free to use "plain vanilla" standard errors throughout. (The sample size is small enough that the robust standard errors would be very noisy in any case!) 
+
+1. Read the abstract, introduction and conclusion of AJR and answer the following:
+      (a) What is the key question that AJR try to answer?
+      (b) Give an overview of AJR's key theory.
+      (c) For $Z$ to be a valid instrument, it must satisfy two assumptions: *relevance* and *exogeneity*. Explain what these assumptions mean in the context of AJR. Can either of them be checked using the available data?
+      
+Comments:
+      
+  (a) AJR are trying to understand the long-term impact of institutions (defined as the degree of protection against expropriation) on economic development in European colonies.
+  
+  (b) By "theory", I understand mechanism and identification strategy. The mechanism through which institutions affect economic development (although coarse) is intuitive. In fact, in this paper, they do not develop further theory on this regard. More interesting is their identification strategy. They believe that differences across mortality rates in colonies might "exogenously" explain the settlement of European colonizers, and consequently the implementation of better institutions in European colonies. Moreover, they show a strong correlation between the quality of original institutions developed by settlers and that of current institutions. Crucially, they restore on the exogeneity of mortality rates, which might be controversial, all throughout the paper.
+  
+  (c) Relevance makes reference to the non-zero effect of the instrumental variable on the regressor of interest. In this context, relevance is to be measured through the impact of mortality rates on the implementation of high-quality institutions. As a result, this assumption is testable. Much literature has been developed in the context of weak instrumental variables. On the other hand, exogeneity assumes that the instrumental variable only affects the independent variable through the regressor of interest. In this context, it assumes that (conditional on covariates) mortality rates only affect economic development through institutional implementation. Although they include an ambitious set of covariates, this assumption can be seen as dubious by the reader. Moreover, this specification is untestable.
+          
+2. OLS Regression:
+      (a) Regress `loggdp` on `risk` and store the result in an object called `ols`. 
+      (b) Display the results of part (a) in a cleanly formatted regression table, using appropriate R packages. 
+      (c) Discuss your results from (b) in light of your readings from AJR. Can we interpret the results of `ols` causally? Why or why not?
+      
+Comments:
+    
+  (c) According to these results, an increase in one point in the risk (property protection) index seems to increase current (1995) GDP by approximately 64%. However, this result is not to be taken as causal. There exists many other variables which might be correlated with both `risk` and `loggdp` which might be driving this correlation (climate, natural resources, colonizing country, population, etc.)      
+```{r}
+ajr = read_dta("https://ditraglia.com/data/ajr.dta")
+ols = lm(loggdp ~ risk, data = ajr)
+
+nice_display = function(model){
+  modelsummary(model,
+             stars = T,
+             gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC')
+}
+nice_display(ols)
+
+```
+
+      
+3. IV Regression:
+      (a) Estimate the first-stage regression of `risk` on `logmort0` and store your results in an object called `first_stage`. Display and discuss your findings. 
+      (b) Estimate the reduced-form regression of `loggdp` on `logmort0` and store your results in an object called `reduced_form`. Display and discuss your findings.
+      (c) Use the `ivreg` function from `AER` to carry out an IV regression of `loggdp` on `risk` using `logmort0` as an instrument for `risk` and store your results in an object called `iv`.
+      (d) Display your results from `iv`. How do they compare to the results of `ols`? Discuss in light of your answer to 2(c) above. 
+      (e) Verify that you get the same estimate as in part (d) by running IV "by hand" using `first_stage` and `reduced_form`.
+      
+Comments:
+  
+  (a) Results suggest that one percentage increase in colonizers mortality reduces the risk index by 0.006 points. This result might look small, but it is highly significant according to our specification. In fact, according to our F-statistic our relevance condition would be satisfied.
+  
+  (b) Results suggest that one percentage increase in the colonizers mortality reduces 1995 GDP by 0.5 percentage points. Consequently, there seems to be a strong correlation between these two variables.
+  
+  (d) As we can see, our IV specification suggests much bigger effects of institutions (`risk`) on economic development (`loggdp`) than our OLS counterparts. In particular, under our IV specification, an increase in one unit of the risk index increases 1995 GDP by around 147\%. Moreover, under the IV assumptions stated above, this coefficient would have a causal interpretation.
+  
+  (e) We obtain the exact same estimates.
+      
+```{r}
+
+first_stage = lm(risk ~ logmort0, data = ajr)
+nice_display(first_stage)
+
+reduced_form = lm(loggdp ~ logmort0, data = ajr)
+nice_display(reduced_form)
+
+iv = ivreg(loggdp ~ risk | logmort0, data = ajr)
+nice_display(list("OLS" = ols, "IV" =iv))
+
+iv_hand = reduced_form$coefficients[2]/first_stage$coefficients[2]
+tibble("IV hand" = iv_hand, "IVreg" = iv$coefficients[2])
+
+```
+      
+4. This question asks you consider a potential criticism of AJR. The critique depends on two claims. Claim \#1: a country's current disease environment, e.g.\ the prevalence of malaria, is an important determinant of GDP/capita. Claim \#2: a country's disease environment today depends on its disease environment in the past, which in turn affected early European settler mortality. 
+      (a) Explain how claims \#1 and \#2 taken together would call into question the IV results from Question 3 above.
+      (b) Suppose that we consider re-running our IV analysis from Question 3 including `malaria` as an additional regressor. Explain why this might address the concerns you raised in the preceding part.
+      (c) Repeat Question 2 including `malaria` as an additional regressor.
+      (d) Repeat Question 3 part (a) adding `malaria` to the first-stage regression.
+      (e) Repeat Question 3 parts (c) and (d) including `malaria` in the IV regression. Treat `malaria` as *exogenous*. This means we will not need an instrument for this variable: instead it serves as its *own* instrument. See "Details" in the help file for `ivreg` to see how to specify this.
+      (f) In light of your results from this question, what do you make of the criticism of AJR based on a country's disease environment?
+
+Comments:
+  
+  (a) As presented above, these claims could affect the exogeneity assumption required in IV designs. If Claims \#1 and \#2 were to be true, then, mortality would also be correlated with gdp performance through paths other than `risk`. In particular, `logmort0` would be correlated with the error in the structural model (via past and present disease environment) making the exogenous assumption void.
+  
+  (b) If the variable `malaria` were to restore (conditional) independence of our instrument in the structural equation model (this is, if `malaria` effectively captures the potential effect of `logmort0` on `loggdp`) then the assumptions of our IV design could be preserved.
+  
+  (c) - (d) - (e) The inclusion of `malaria` seems justified as it turns out to be a relevant variable in the OLS design and an almost-significant covariate in the IV design. In particular, when this variable is included both estimates of the impact of `risk` get reduced but they still exhibit the same sign and they preserve significance (although at a lower confidence level than before in the case of IV).
+  
+  (f) From my point of view, the inclusion of `malaria` seems justified from a methodological perspective even if only significant at a 10% confidence level within the IV design. Estimates of `risk` remain significant, hence it could be argued that past disease environment seems not to be (entirely) driving our `risk` estimates. On the other hand, it could still be argued whether `malaria` is correctly capturing the past disease environment as, at the end of the day, malaria is just one of the multiple diseases that colonizers suffered from at that time. Hence critic could remain valid.
+      
+```{r}
+
+ols_mal = lm(loggdp ~ risk + malaria, data = ajr)
+
+first_stage_mal = lm(risk ~ logmort0 + malaria, data = ajr)
+nice_display(first_stage_mal)
+
+reduced_form_mal = lm(loggdp ~ logmort0 + malaria, data = ajr)
+nice_display(reduced_form_mal)
+
+iv_mal = ivreg(loggdp ~ risk + malaria | logmort0 + malaria, data = ajr)
+nice_display(list("OLS" = ols_mal, "IV" =iv_mal))
+
+```
+      
+      
+5. This question asks you to consider another potential criticism of AJR promoted by Jeffrey Sachs who stresses "geographical" explanations of economic development. 
+      (a) Repeat part (e) from Question 4 but add `latitude`, `rainmin`, and `meantemp` as additional control regressors in addition to `malaria`. Each of these variables will serve as its own instrument. Continue to instrument `risk` using `logmort0`. 
+      (b) Discuss your results. What do you make of AJR's view vis-a-vis Sachs's critique?
+      
+Comments:
+  
+  
+  (b) These results seem to challenge a bit more AJR results as the estimate of `risk` loses its significance in our conditional IV design. In that sense, although further analysis would be needed, it might be the case that the exogeneity assumption is certainly not satisfied in this context and that geographical characteristics (such as weather) of the colony at stake might explain the economic development of the country.
+
+```{r}
+ols_geo = lm(loggdp ~ risk + latitude + rainmin + meantemp, data = ajr)
+
+first_stage_geo = lm(risk ~ logmort0 + latitude + rainmin + meantemp,
+                     data = ajr)
+nice_display(first_stage_geo)
+
+reduced_form_geo = lm(loggdp ~ logmort0 + latitude + rainmin + meantemp,
+                      data = ajr)
+nice_display(reduced_form_geo)
+
+iv_geo = ivreg(loggdp ~ risk + latitude + rainmin + meantemp |
+                 logmort0 + latitude + rainmin + meantemp, data = ajr)
+nice_display(list("OLS" = ols_geo, "IV" =iv_geo))
+
+```
+
+
+## Problem \#3
+
+In this problem you will simulate from the following simple instrumental variables model
+$$
+\begin{aligned}
+Y_i &= \beta X_i + U_i \\
+X_i &= \pi Z_i + V_i
+\end{aligned},
+\quad
+\begin{bmatrix}
+U_i \\ V_i
+\end{bmatrix} \sim \text{iid Normal}\left(
+\begin{bmatrix}
+0 \\ 0
+\end{bmatrix}, 
+\begin{bmatrix}
+1 & \rho \\
+\rho & 1
+\end{bmatrix}
+\right)
+$$
+
+for $i = 1, 2, ..., n$ where $(U_i, V_i)$ are independent of $Z_i$. The purpose of this simulation is to illustrate what can go wrong with the IV estimator of $\beta$ and its associated standard error when $Z_i$ is a *weak instrument*, i.e. $\pi$ is small in absolute value. In the simulations below you will fix the true value of $\beta$ equal to **zero**. (Any value would give the same qualitative results, and this is the simplest possibility.) You will also hold the values of the instrument $Z_1, Z_2, ..., Z_n$ *fixed* across simulation replications. Note that, since the errors in this model are independent of $Z_i$, there is no need for heteroskedasticity-robust standard errors: use the plain-vanilla ones instead. Use $n = 100$ throughout. 
+
+1. Generate $n = 100$ standard normal draws `z_fixed`. Center the result so that `mean(z_fixed)` is zero to the numerical precision of your machine, and scale them so that `sum(z_fixed^2)` equals 100. You will use these draws as the instrumental variable in all simulation replications below. **Do not re-draw $Z_i$ at any point below!** 
+
+```{r}
+
+z_draws = function(n = 100){
+  z_fixed = rnorm(n)
+  z_fixed = z_fixed - mean(z_fixed)
+  z_fixed = sqrt((100/sum(z_fixed^2)))*z_fixed
+}
+
+z_fixed = z_draws()
+
+tibble(avg_z_fixed = mean(z_fixed),
+       sum_z_fixed_2 = sum(z_fixed^2)) 
+
+```
+
+2. Write a function called `draw_sim_data()` to simulate from the above model with $n = 100$, $\beta=0$ and instruments `z_fixed`. Your function should take two arguments: `pi` is the first-stage coefficient, and `rho` is the correlation between $U_i$ and $V_i$. It should return a data frame with three named columns: `x`, `y`, and `z`, where `x` is the endogenous regressor, `y` is the outcome, and `z` is `z_fixed`.
+
+```{r}
+draw_sim_data = function(n = 100, beta = 0, instr = z_fixed,
+                         mean_mvn = c(0,0), rho, pi){
+  # I incorporate extra arguments for higher flexibility
+  mvn_var = matrix(c(1, rho, rho, 1), ncol = 2, byrow = T)
+  errors = mvrnorm(n, mu = mean_mvn, Sigma = mvn_var)
+  u = errors[,1]
+  v = errors[,2]
+  
+  x = pi*instr + v
+  y = beta*x + u
+  
+  tibble(y,x,z = instr, u) #I also store error for later use
+}
+```
+
+
+3. Write a function called `get_iv_stats()` that takes a single argument `dat`, a data frame matching the output of `draw_sim_data()` from above. Your function should return a vector with named elements `est` and `se`: the instrumental variables estimator for $\beta$ and corresponding standard error computed from `dat$y`, `dat$x`, and `dat$z`. Compute these *by hand*, i.e. without using `ivreg`.
+
+Comments:
+
+I have taken a double-approach to compute the standard errors. First, I have used the analytical definition of standard errors (see `se` below), and second, I have used Wooldridge (2016) characterization of standard errors in IV. In both cases, I correct by degrees of freedom. As you can see, both of these characterizations are very close to the `iv_regress()` standard errors, but match is not perfect. In particular, Wooldrige standard errors are usually slightly bigger.
+
+```{r}
+get_iv_stats = function(dat){
+  
+  # Reduced form and first-stage
+  reduced_form = lm(y~z, data = dat)
+  first_stage = lm(x~z, data = dat)
+  
+  # Extra regressions and predictions for error computation
+  x_hat = predict(first_stage)
+  structural = lm(dat$y~x_hat)
+  y_hat = predict(structural)
+
+  #Estimate
+  est = reduced_form$coefficients[2]/first_stage$coefficients[2]
+  
+  #Analytic SE (Ditraglia, 2022)
+  se = sqrt(var(dat$z)*var(dat$u)/(var(dat$x, dat$z)^2)*(1/(nrow(dat)-2)))
+
+  #Wooldridge (2016)
+  sst = sum((dat$x-x_hat)^2)
+  r2xz = summary(first_stage)$r.square
+  sigma2 = sum((dat$y - y_hat)^2)/(nrow(dat)-2)
+  
+  se_wool = sqrt(sigma2/(sst*sigma2))
+  
+  #Display
+  c("est" = round(est,3), "se"=round(se,3), "se_wool" = round(se_wool,3))
+}
+
+# Wrap-up function
+wrap_iv_stats = function(n = 100, beta = 0, instr = z_fixed,
+                         mean_mvn = c(0,0), rho, pi){
+  data = draw_sim_data(rho = rho, pi = pi) #Data simulation
+  by_hand = get_iv_stats(data) #get_stats
+  iv_reg = ivreg(y ~ x | z, data = data) #Compare with iv_regress
+  cbind(by_hand, "iv_reg" = c(round(summary(iv_reg)$coefficients[2,1],3), 
+                              round(summary(iv_reg)$coefficients[2,2],3),
+                              NA)) #Display
+}
+
+```
+
+
+4. Using the functions you wrote in the two preceding parts, simulate 100 observations from the model described above with $\pi = 1$ and $\rho = 0.5$ and calculate the instrumental variables estimator and associated standard error for $\beta$. Use `ivreg` to check your results.
+
+Comments:
+
+See comments above.
+
+```{r}
+wrap_iv_stats(rho = 0.5, pi = 1)
+```
+
+5. The *concentration parameter* $\mu^2$ quantifies the strength of an instrumental variable. Larger values indicate a stronger instrument. In the model described above $\mu^2 = \pi^2 \mathbf{Z}'\mathbf{Z}$. Given the way we have scaled `z_fixed`, this simplifies to $\mu^2 = 100 \pi^2$. Write a function called `replicate_iv_sim()` that replicates the IV simulation experiment described above at fixed parameter values. It should take three arguments: `n_reps` is the number of simulation replications, `conc` is the concentration parameter $\mu^2$ and `rho` is the correlation between $U_i$ and $V_i$ described above. It should return a data frame with columns `est` and `se` corresponding to the output of `get_iv_stats()` and columns `conc` and `rho` that list the parameter values used. (The latter two columns will be helpful in the next part for use with `ggplot2`.)
+
+```{r}
+# Interim_iv wraps-up get_iv_stats in a slightly different way than
+# wrap_iv_stats() such that replicate_iv_sim() and Map() can smoothly
+# operate throughout
+
+interm_iv_sim = function(rho, pi, conc){
+    data = draw_sim_data(rho = rho, pi = pi)
+    by_hand = get_iv_stats(data)
+    by_hand = by_hand[-3] 
+    by_hand = append(by_hand, c(rho = rho, conc = conc))
+}
+
+replicate_iv_sim = function(n_reps, conc, rho){
+  pi = sqrt(conc)/10
+  replicate(n_reps, interm_iv_sim(rho = rho, pi = pi, conc = conc))
+}
+
+```
+
+
+6. Use `Map()` or `mcMap()` from the `parallel` package to call `replicate_iv_sim()` over a grid of parameter values: $\rho \in\{ 0.5, 0.9, 0.99\}$ and $\mu^2 \in \{0, 0.25, 10, 100\}$ with `nreps = 10000`. Organize your results in a tibble called `simulations`. This will be quite a large tibble indeed: 120,000 rows! Use `simulations` to make a table showing how the *median bias* of the IV estimator changes with the parameter values. In other words: for each combination of values $\rho$ and $\mu^2$ calculate the difference between the median of the sampling distribution of the IV estimator. Since the true parameter value is zero, this equals the median bias. Comment on your results.
+
+Comments:
+
+As you can see, high concentration parameter, this is, high strength of first-stage coefficients reduce the bias (up to zero). However, low values of $\mu^2$ have the opposite effect. Moreover, high $\rho$ seems to increase the variation in bias. This is, high $\rho$ boosts bias in the presence of high $\mu^2$ but attenuates bias when $\mu^2$ is low. These results are sensible given that $\rho$ is mediating the error covariance. The higher the $\rho$ the higher the impact of first stage flaws (bias) into second-stage.
+
+```{r}
+grid = expand.grid(rho = c(0.5, 0.9, 0.99),
+                   conc = c(0, 0.25, 10, 100))
+simulations_raw = Map(replicate_iv_sim, n_reps = 10000,
+                                    conc = grid$conc, rho = grid$rho)
+
+# This piece fixes the formatting of Map() which is reporting a list of lists
+simulations_list = list()
+for (i in 1:nrow(grid)){
+  simulations_list[[i]] = do.call(rbind, simulations_raw[i]) |> t()
+}
+simulations = do.call(rbind, simulations_list) |> as_tibble() |>
+              mutate(rho = as.character(rho),
+                     conc = as.character(conc)) #rho and conc into character
+                                                #for display in `ggplot()`
+
+simulations |> group_by(rho, conc) |> 
+  summarize(median_bias = median(est.z))
+
+```
+
+7. Using the tibble `simulations` from the preceding part, make kernel density plots similar to those in Figure 1 (a) and (b) of Stock, Wright, & Yogo (2002; JBES) "A Survey of Weak Instruments and Weak Identification in Generalized Method of Moments." I suggest using `ggplot2` and faceting by `rho` so that the different values of the concentration parameter appear on the same plot. I also *strongly suggest* filtering to exclude extremely large or small values before makind your kernel density plots. Otherwise you won't be able to see anything! (You might start with the range $[-5,5]$ and tweak from there.) Comment on your findings.
+
+Comments:
+
+Plots confirm our intuitions from the preceeding part. Bias is attenuated in the presence of high $\mu^2$. Moreover, low $\rho$ widens the tails of all four distributions, thus attenuates bias for low $\mu^2$.
+
+```{r}
+
+simulations |> filter(est.z>(-4), est.z<4)|>
+  ggplot(aes(x = est.z, fill = conc)) +
+  geom_density(alpha = 0.5) +
+  facet_grid(~rho) +
+  theme_classic()
+
+```
+
