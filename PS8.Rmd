@@ -1,0 +1,412 @@
+---
+title: 'Core ERM Problem Set #8'
+author: "2937141"
+date: "June 23rd"
+output: pdf_document
+fontsize: 12pt
+---
+
+## Problem \#1
+
+This problem is based on data from [Carpenter & Dobkin (2009; AEJ Applied)](http://masteringmetrics.com/wp-content/uploads/2015/01/Carpenter-and-Dobkin-2009.pdf), who study the causal effect of alcohol consumption on mortality in US youths. In 1984, the US Federal Government introduced legislation that compelled states to introduce a minimum legal drinking age (MLDA) of 21. Before then, different states had different minimum ages at which it was legal to purchase alcohol: some had an MLDA of 18, others 19, and others 20. Carter & Dobkin (2009) do *not* rely upon variation in states' MLDAs before 1984. (If you're interested to know why, see the introduction of their paper.) Instead they take a regression discontinuity approach. Since 1984, a US resident's *birthday* has created a sharp change in ease of access to alcohol. The day before your 21st birthday, you cannot buy alcohol legally; on the day itself and forever after you can. If we view the treatment as *being able to buy alcohol legally*, this is a *sharp* RD design. The outcome of interest is all-cause mortality. If legal access to alcohol causes an increase in mortality, we should see a "jump" in mortality rates just after people turn 21. For more background, see the paper.
+
+Because access to the underlying individual mortality data is restricted, here we will work with *group averages*. The data you will need to complete the following is contained in a file called `mlda.dta`, available from the data directory of my website: `https://ditraglia.com/data/`. The dataset contains multiple columns, but you'll only need two of them. The first is `agecell`. This variable contains age in months, stored as a whole number of years plus a decimal. (It's a bit inelegant, I agree!) The second is `all`, which gives all-cause mortality rates per 100,000 individuals. These variables were constructed as follows. Underlying both of them is individual data on mortality. These individual data were grouped into fifty "bins" based on age in months. The average age in the bin was stored in `agecell` and the mortality rate in the bin was stored in `all`. (I provide this explanation only in case you're curious: you won't need to worry about it below!)
+
+1. Use a linear RD model to estimate the causal effect of legal access to alcohol on death rates. Plot your results and carry out appropriate present appropriate statistical inference. Discuss your findings. 
+2. Repeat 1 using a *quadratic* rather than linear specification. Compare and contrast your findings.
+3. RD analysis is fundamentally *local* in nature: the mortality rates of individuals far from the cutoff should not inform us about the causal effect for 21 year olds. Check the sensitivity of your results from parts 1 and 2 by restricting your sample to ages between 20 and 22, inclusive. Discuss your findings.
+
+```{r, results='hide', message=FALSE}
+# tinytex::install_tinytex() #For knitting
+library(tidyverse)
+library(haven)
+library(modelsummary)
+library(gridExtra)
+library(kableExtra)
+```
+Comments:
+
+1. To conduct linear RD, I rely on linear local regression considerations. In particular, for regression, I transform the running variable `agecell` in `agecell` - cutoff, and then run a single linear regression with an interaction term $D_i=\textbf{1}(\text{agecell}>21)$. When plotting, I simply opted for running two different local regressions at both sides of the cutoff.
+
+  Under these considerations, the coefficient of interest is given by the $D_i$ coefficient. This one turns out to be very significant (at standard confidence levels). We can confirm our intuition graphically in the relevant plot.
+
+2. Results do not substantially change when a square specification is implemented. In particular, standard errors increase a bit, but so it does the coefficient, leaving the significance considerations unchanged. Moreover, observe how none of the square terms turns out to be significant at standard confidence levels.
+
+3. Results remain fairly robust despite the low number of observations. This evidence suggests little dependency of the results to the selected cutoff, what increases the reliability of the author's claims.
+
+```{r, warning=FALSE}
+#Import and data manipulation
+mlda = read_dta("https://ditraglia.com/data/mlda.dta") |>
+       select(agecell, all) |>
+       mutate (agecell_new = agecell-21,
+               D = agecell>21)
+
+# Regression models (1)-(2)-(3)
+linear_rd = lm(all~agecell_new*D, data = mlda)
+square_rd = lm(all~(agecell_new + I(agecell_new^2))*D, data = mlda)
+linear_rd_filter = mlda |> filter(agecell >20, agecell<22) %>%
+                   lm(all~agecell_new*D, data = .)
+
+modelsummary(list("Linear" = linear_rd,
+                  "Square" = square_rd,
+                  "Linear Filter" = linear_rd_filter),
+                   stars = T,
+                   gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC')
+
+#Plots
+linear_plot = mlda |> ggplot(aes(x = agecell, y = all,
+                                 color = factor(D), fill = NULL)) +
+                      geom_point() +
+                      geom_smooth(method = 'lm', formula = y ~ x) +
+                      theme(legend.position = 'none',
+                            panel.background = element_rect(fill = "white")) +
+                      xlab("Age (years)") +
+                      ylab("Mortality (per 100,000)") +
+                      ggtitle("Linear")
+
+square_plot = mlda |> ggplot(aes(x = agecell, y = all, color = factor(D))) +
+                      geom_point() +
+                      geom_smooth(method = "lm", formula = y ~ poly(x,2)) +
+                      theme(legend.position = 'none',
+                            panel.background = element_rect(fill = "white")) +
+                      xlab("Age (years)") +
+                      ylab("Mortality (per 100,000)") +
+                      ggtitle("Square")
+
+linear_filter_plot = mlda |> filter(agecell>20, agecell<22) |>
+                      ggplot(aes(x = agecell, y = all,
+                                 color = factor(D), fill = NULL)) +
+                      geom_point() +
+                      geom_smooth(method = 'lm', formula = y ~ x) +
+                      theme(legend.position = 'none',
+                            panel.background = element_rect(fill = "white")) +
+                      xlab("Age (years)") +
+                      ylab("Mortality (per 100,000)") +
+                      ggtitle("Linear Filter")
+
+
+grid.arrange(linear_plot, square_plot, linear_filter_plot, nrow = 3)
+
+
+```
+
+
+## Problem \#2
+
+This problem uses a dataset called `minwage.dta`, drawn from a famous study of the effects of minimum wages by [Card \& Kreuger (1994: AER)](http://sims.princeton.edu/yftp/emet04/ck/CardKruegerMinWage.pdf). You can download a copy from the data directory of my website at `https://ditraglia.com/data/minwage.dta`. This `minwage.dta` dataset is contains information collected from fast food restaurants in New Jersey and eastern Pennsylvania during two interview waves: the first in March of 1992 and the second in November-December of the same year. Between these two interview waves -- on April 1st to be precise -- the New Jersey minimum wage increased by just under 19\%, from \$4.25 to \$5.05 per hour. The minimum wage in Pennsylvania was unchanged during this period: \$4.25 per hour. In the exercises that follow, you'll apply a difference-in-differences approach to this dataset to explore the effects of raising the minimum wage.
+
+Here is a description of the variables from `minwage.dta` that you will need to complete the problem. When you see a pair of variables in the table below, e.g.\ `fte` / `fte2`, both measure the same thing but the one with the `2` is based on the *second* survey wave, while the one without the `2` is based on the *first* survey wave.
+
+| Name | Description |
+|:---------------|:-----------------------------------------------|
+| `state` | Dummy variable = 1 for NJ, = 0 for PA |
+| `wage_st` / `wage_st2` | Starting wage in dollars/hour at the restaurant|
+| `fte` / `fte2` | Full-time equiv. employment = \#(Full time employees) + \#(Part-time Employees)/2. Excludes managers. |
+| `chain` | Categorical variable taking values in $\{1, 2, 3, 4\}$ to indicate the four chains in the dataset: Burger King, KFC, Roy Rogers, and Wendy's |
+| `co_owned` | Dummy variable = 1 if restaurant is company-owned, =0 if franchised |
+| `sample` | Dummy variable = 1 if wage and employment data are available for both survey waves at this restaurant|
+
+1. Preliminaries:
+      (a) Download the data and load it in R using an appropriate package.
+      (b) Restrict the sample to only those restaurants with `sample` equal to 1 to ensure that we are making an apples-to-apples comparison throughout the remainder of this exercise.
+      (c) Rename the column `state` to `treat`.
+      (d) Create a *new* column called `state` that equals `PA` if `treat` is `0` and `NJ` if `treat` is `1`.
+      (e) Create a column called `low_wage` that takes the value `1` if `wage_st` is less than `5`.
+
+Comments:
+
+Besides conducting the suggested changes, I have also transformed the data from wide to long (avoiding the new data frame creation suggested in 4). To do so, I have pivoted to long twice (one per variable -- `wage` and `fte`) and then deleted the duplicated observations generated in this process. I also factorize chain for convenience.
+      
+```{r}
+minwage = read_dta("https://ditraglia.com/data/minwage.dta") |>
+          filter(sample == 1) |>
+          rename("treat" = state) |>
+          mutate(state=   ifelse(treat==0, "PA", "NJ"),
+                 low_wage=ifelse(wage_st<5, 1, 0),
+                 chain = factor(chain, levels = unique(chain))) |>
+          pivot_longer(starts_with('fte'), names_to = 'post',
+                       values_to = 'fte') |>
+          pivot_longer(starts_with('wage_st'), names_to = 'post_wage',
+                       values_to = 'wage') |>
+          mutate(post = ifelse(grepl("2", post), 1, 0),
+                 post_wage = ifelse(grepl("2", post_wage), 1, 0)) |>
+          filter(post==post_wage) |> #remove duplicate observations
+          select(treat, state, fte, wage, chain, co_owned, post, low_wage)
+
+```      
+
+2. Baseline Diff-in-Diff Estimate: starting wages
+      (a) Calculate the average wage in each survey wave separately for each state.
+      (b) Calculate the within-state time-differences based on (a).
+      (c) Calculate the between-state difference-in-differences based on (c).
+      (d) Interpret your findings from (c). What do they tell us about the causal effect of increasing the minimum wage? What assumptions are required for this interpretation to be valid?
+      
+Comments:
+      (a) See `sum_means`.
+      (b) See `sum_diff_states`. NJ = 0.4692. PA = -0.0348.
+      (c) DiD estimate is -0.504. 
+      (d) As expected, the increase in the minimum wage in NJ has increased the actual wage by \$0.5. This result is completely coherent with the policy at stake (bear in mind that not every worker was working at the minimum wage salary, hence mean wages did not increase as much as the minimum wage). For this interpretation to be valid we need a Common Trend Assumption. This is, in case the treated group had non been treated, we would have expected a parallel evolution of the dependent variable between surveys. Formally,
+      
+$$\mathbb{E}[Y(0) | T = 1, G = 1] - \mathbb{E}[Y(0) | T = 0, G = 1] = \mathbb{E}[Y(0) | T = 1, G = 0] - \mathbb{E}[Y(0) | T = 1, G = 0]$$
+In this context, this is analogous to assume that wages would not have changed in NJ, shall the minimum wage policy had not been implemented.
+      
+      
+```{r}
+by_hand_did = function(variable){
+  
+  # Difference by survey and state
+  sum_means = minwage |> group_by(state, post) |>
+              summarise(avg = mean({{variable}})) # For non-standard eval
+  
+  print(sum_means)
+  
+  state_vector = c("NJ", "PA")
+  
+  diff_state =  sum_means$avg[sum_means$post == 1]- 
+                  sum_means$avg[sum_means$post == 0]
+  
+  # Difference within state
+  sum_diff_state = tibble("state" = state_vector, 
+                          "diff_state" = round(diff_state,4))
+  
+  print(sum_diff_state)
+  
+  # DiD estimate
+  print(paste("Diff-in-Diff estimator is",
+              round(sum_diff_state[1,2]-sum_diff_state[2,2],4)))
+}
+
+by_hand_did(wage)
+```
+      
+3. Baseline Diff-in-Diff Estimate: full time equivalent employment
+      (a) Repeat question 2 but using full-time equivalent employment as the outcome variable rather than starting wages.
+
+Comments:
+      (a) See `sum_means`.
+      (b) See `sum_diff_states`. NJ = 0.2868. PA = -2.0152.
+      (c) DiD estimate is 2.302. 
+      (d) If anything, the implementation of minimum wage had caused a increase in employment (of 2.3\%). Same assumptions need to hold for this estimate to be given a causal interpretation.
+```{r}
+by_hand_did(fte)
+```
+      
+4. Reshape `minwage` for Diff-in-Diff Regression Estimation:
+      (a) Create a tibble called `wave1` containing only the columns `state`, `treat`, `wage_st`, `fte`, `chain`, `co_owned`, and `low_wage`. Add a column called `post` to `wave1` that equals `0` for every observation.
+      (b) Create a tibble called `wave2` containing only the columns `state`, `treat`, `wage_st2`, `fte2`, `chain`, `co_owned`, and `low_wage`. Rename `wage_st2` to `wage_st` and `fte2` to `fte`. Then add a column called `post` to `wave2` that equals `1` for every observation.
+      (c) Create a tibble called `both_waves` by *stacking* `wave1` on top of `wave2`. You can do this using the `bind_rows()` command from `dplyr`.
+      
+Comments:
+
+Already done in Exercise 1 (arguably in a cleaner manner?).
+
+5. Diff-in-Diff Regression Estimates:
+      (a) Consider the following regression model using the variables `treat` and `post` constructed above: $$Y_{i,s,t} = \beta_0 + \beta_1 (\texttt{treat}_{i,s}) + \beta_2 (\texttt{post}_t) + \beta_3 (\texttt{treat}_{i,s} \times \texttt{post}_t) + \epsilon_{i,s,t}$$
+      where $i$ indexes *restaurants*, $s$ indexes *states*, and $t$ indexes *time periods*, i.e. the two survey waves.
+      Explain the meaning of each of the four regression coefficients.
+      Which one gives the Regression differences-in-differences effect?
+      (b) Estimate the regression from part (a) based on `both_waves` using `wage_st` as the outcome variable. Summarize your results, including appropriate statistical inference. How do they compare to those that you calculated in question 2 above? 
+      (c) Estimate the regression from part (a) based on `both_waves` using `fte` as the outcome variable. Summarize your results, including appropriate statistical inference. How do they compare to those that you calculated in question 3 above? 
+      (d) An advantage of the regression-based formulation of differences-in-differences is that it allows us to control for other variables that might affect wages and employment. Repeat parts (b) and (c) adding `co_owned` and dummy variables for each of the four restaurant chains to your regression.
+      Hint: rather than creating separate dummy variables from each of the values that `chain` can take, use `as.factor()` to convert `chain` to a factor. Then if you include `chain` in a regression, R will automatically create the dummy variables for you.
+      (e) How do your results from part (d) compare with those of parts (b) and (c)?
+      
+Comments:
+      (a) $\beta_0$ reflects the pre-treatment (dependent variable) level of the non-treated group (i.e. PA). $\beta_1$ reflects the pre-treatment difference across groups (i.e. NJ - PA). $\beta_2$ reflects the time effect for the non-treated group (i.e. $\text{PA}_1 - \text{PA}_0$). Finally $\beta_3$ is the DiD estimator.
+      (b) Estimates in (b) match perfectly those found in (2). [0.504]. Observe how this effect is very significant.
+      (c) Our estimates match perfectly those found in (2) [2.302]. Observer how this effect is *not* significant at standard confidence levels, suggesting that the implementation of minimum wage had no significant impact on employment levels.
+      (d) The introduction of additional covariates has virtually no impact in our coefficients of interest.
+```{r}
+
+did_wage = lm(wage ~ post*treat, data = minwage)
+did_wage_covs = lm(wage ~ post*treat +  co_owned + chain, data = minwage)
+did_fte = lm(fte ~ post*treat, data = minwage)
+did_fte_covs = lm(fte ~ post*treat + co_owned + chain, data = minwage)
+modelsummary(list("Wage"=did_wage,
+                  "Wage"=did_wage_covs,
+                  "FTE"=did_fte,
+                  "FTE"=did_fte_covs), 
+             stars = T,
+             gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC')
+
+```      
+
+6. Probing the Diff-in-Diff Assumptions:
+      (a) What assumptions are required for the diff-in-diff approach to provide a valid causal estimate of the effects of New Jersey raising its minimum wage? 
+      (b) An alternative to the comparison of NJ and PA restaurants is a *within* NJ comparison. The key insight here is that only restaurants with starting wages below \$5 per hour in the first wave will be affected by the change in minimum wages. Use the variable `low_wage` to run this alternative to the regression from 5(a) using only observations from NJ. Discuss your findings.
+      (c) What assumptions are needed for the DD estimate from (b) to be reliable? How plausible is this assumption compared to the assumption from (a)?
+      (d) Repeat part (b) but restrict attention to restaurants in `PA` where there was no change in minimum wages. Discuss your findings. What do these results suggest about the plausibility of the diff-in-diff assumptions in part (b)?
+      
+Comments:
+    (a) Those already described above, namely CTA.
+    (b) First observe, that now we are implementing a simple differences approach, which of course relies on much stronger assumptions to yield causal interpretation. However, this simple difference estimator confirms our hypothesis above. That an increase in minimum wage effectively raised wages (more so when restricting the sample to `low_wage` payers) while it had no significant effect on employment.
+    (c) It relies on a "counterfactual invariability". This means that in absence of treatment we would expect the variable of interest to remain unchanged across time.
+    (d) Our results here confirm the experimental design depicted above. PA did not experience a change in minimum wage policy and consequently we do not observe a significant change in wages across time. Moreover, we observe no significant variation in employment. This results support our strong hypothesis in (c) as (if we assume that PA is a valid counterfactual for NJ) we observe that in absence of treatment both wages and employment remained unchanged.
+
+```{r}
+
+within_state_did = function(state){
+  
+  wage_reg = minwage |> filter(state=={{state}}, low_wage ==1) %>% 
+    lm(wage ~ post, data = .)
+  fte_reg = minwage |> filter(state=={{state}}, low_wage ==1) %>% 
+    lm(fte ~ post, data = .)
+  
+  modelsummary(list("Wage"= wage_reg,
+                    "FTE" = fte_reg),
+                 stars = T,
+                 gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC',
+                 title = state)
+}
+
+within_state_did(state = "NJ")
+within_state_did(state = "PA")
+
+
+```
+
+
+
+## Problem \#3
+
+This problem is adapted from an exercise in Kosuke Imai's excellent book [Quantitative Social Science: An Introduction](https://press.princeton.edu/books/hardcover/9780691167039/quantitative-social-science). It draws on two published papers: Annie Franco, Neil Malhotra, and Gabor Simonovits (2014) "Publication bias in the social sciences: Unlocking the file drawer." *Science*, vol. 345, no. 6203, pp 1502–1505. and Annie Franco, Neil Malhotra, and Gabor Simonovits (2015) "Underreporting in political science survey experiments: Comparing questionnaires to published results." *Political Analysis* vol. 23, no. 2, pp 306–312. You will not need to consult these papers to answer this question, although you may find them interesting to read for more background.
+
+You may have heard something about the "replication crisis" in social science. In broad strokes, concern has grown in recent years that a substantial fraction of published work in empirical social science may be unreliable. The tools of classical frequentist inference, hypothesis testing and confidence intervals, were designed to protect researchers against drawing erroneous conclusions from data. These tools can and have been misused, but that's only half of the story. Even if every *individual* researcher does things by the book, science is a social enterprise, and the mechanisms through which research is filtered and disseminated *between researchers* are tremendously important in determining which claims are accepted as reliable within a field. 
+
+It is widely thought that journal editors and referees are more willing to accept a paper for publication if it contains statistically significant results, an effect called **publication bias**. This practice may seem natural, but its consequences are perverse. It could easily lead to a situation in which [most published research is false](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1182327/). Things only get worse if individual researchers, aware of journals' proclivities, tend to self-censor projects with statistically insignificant results, never submitting them for peer review and potential publication. This second effect is called **file drawer bias**.
+
+Below you will look for evidence of publication and file drawer bias using two datasets `filedrawer.csv` and `published.csv`. You can download these from the data directory of my website: `https://ditraglia.com/data/`. Both datasets contain information about experiments funded through the ["Time-Sharing Experiments in the Social Sciences" (TESS)](http://tessexperiments.org/) program. Whereas `published.csv` contains information about 53 *published papers* that resulted from TESS-funded experiments, `fildrawer.csv` contains information about 221 TESS-funded projects that *may or may not* have yielded a published paper. 
+
+The columns contained in `fildrawer.csv` are as follows:
+
+| Name | Description |
+|:-------|:-------------------------------------------------------------|
+| `DV` | Publication status ("Unwritten" / "Unpublished" / Published, non top" / "Published, top") | 
+| `IV` | Statistical significance of main findings ("Null" / "Weak" / "Strong") | 
+| `max.h` | Highest H-index among authors | 
+| `journal` | Discipline of journal for published articles | 
+
+Two notes on the preceding. First, "top" and "non top" refer to journal rankings, with top indicating a highly-ranked journal and non top indicating a lower-ranked journal. Second, the [H-index](https://en.wikipedia.org/wiki/H-index) is a measure of scholarly productivity and influence computed from citation counts. It is the largest number $h$ such that you have published at least $h$ papers *each of which* has received a least $h$ citations.
+
+The columns contained in `published.csv` are as follows:
+
+| Name | Description |
+|:-------|:-------------------------------------------------------------|
+| `id.p` | Paper identifier | 
+| `cond.s` | \# of experimental conditions in the *study* | 
+| `cond.p` | \# of experimental conditions presented in the *published paper* | 
+| `out.s` | \# of outcome variables in the *study* | 
+| `out.p` | \# of outcome variables used in the *published paper* | 
+
+
+1. Patterns in `filedrawer.csv` 
+     (a) Load `filedrawer.csv` and store it in a tibble called `filedrawer`.
+     (b) For each value of `IV`, count the number of papers with each publication status. Suggestion: try `datasummary_crosstab()` from `modelsummary`.
+     (c) Suppose we wanted to test the null hypothesis that there's no difference in publication rates (in any journal) across projects with "Null" and "Weak" results compared to "Strong" results. Carry out appropriate data manipulation steps, and then run a regression that would allow us to accomplish this.
+     (d) Suppose we were worried that "researcher quality," as measured by H-index, causes both publications and strong results: e.g. better researchers are more likely to think up experimental interventions with large treatment effects *and* write better papers. This might confound our comparisons from above. Carry out additional analyses that could help us address this concern. 
+     (e) Interpret your results from above.
+     
+Comments:
+     (b) See results below.
+     (c) and (d) Data manipulation involves the creation of a variable `strong` = 1 if `IV`== "Strong" and the creation of variable `published` which takes value 1 if the study has been published (either Top or Non-Top). Eventually, I run a logit regression separately for each journal and the total of non-published studies. Note that these results might be tricky as there is no need for unpublished papers and papers published in a particular journal to be similar. Still, we observe, how overall (with the exception of communication journals) strong results are a significant regressor of publication status. When introducing `max.h` results do not change substantially, in particular, they do not affect the significance of our coefficient of interest.
+     (e) From this exercise, we might draw the conclusion that findings strength is a significant (but certainly not the only) variable explaining publication status. There seems to be important differences across journals.
+     
+```{r}
+filedrawer = read_csv("https://ditraglia.com/data/filedrawer.csv",
+                      show_col_types = FALSE)
+
+# Number of papers across publication status
+filedrawer %>% datasummary_crosstab(IV ~ DV, data = .)
+
+# Data manipulation
+filedrawer = filedrawer |>
+              mutate(strong = ifelse(IV=="Strong", 1, 0),
+                     published = ifelse(grepl("Published", DV), 1, 0),
+                     journal = case_when(journal == "COMMUNICATION" ~ "Comm",
+                                         journal == "OTHER" ~ "Other",
+                                         journal == "PSYCHOLOGY" ~ "Psych",
+                                         journal == "POLITICAL SCIENCE" ~ "PolSci"))
+
+journal_vector = unique(filedrawer$journal)[-1]
+store_models = list()
+
+for (i in 1:length(journal_vector)){
+  journal = journal_vector[i]
+  j = i+1
+  public_rates = filedrawer |> filter (journal == {{journal}} | is.na(journal)) %>%
+                 glm(published~strong, ., family = binomial(link = "logit"))
+  public_rates_h = filedrawer |> filter (journal == {{journal}} | is.na(journal)) %>%
+                   glm(published~strong + max.h, ., family = binomial(link = "logit"))
+  store_models = append(store_models, list(public_rates))
+  store_models = append(store_models, list(public_rates_h))
+
+}
+
+names(store_models) = rep(journal_vector, each = 2)
+
+## Add regression controlling for h-index
+
+modelsummary(store_models,
+             stars = T,
+            gof_omit = 'Log.Lik|R2 Adj.|AIC|BIC') |>
+  kable_styling(latex_options="scale_down")
+
+
+```
+     
+
+2. Patterns in `published.csv`:
+     (a) Load `published.csv` and store it in a tibble called `published`.
+     (b) Make a scatterplot with `cond.s` on the x-axis and `cond.p` on the y-axis. Use jittering to avoid the problem of overplotting.
+     (c) Repeat the preceding with `out.s` and `out.p` in place of `cond.s` and `cond.p`.
+     (d) Interpret your results.
+     
+Comments:
+     (d) Theres seems to exist a strong correlation between the number of experimental conditions presented in the study and the number of experimental conditions presented in the published paper. Similarly, we observe a strong correlation between the outcome variables presented in the study and the outcome variables presented in the study. However, this correlation is not perfect (one-to-one), suggesting that some of the conditions or outcome variables presented in the original study are not reported for publciation. 45º line has been added for clarity.
+     
+```{r}
+published = read_csv("https://ditraglia.com/data/published.csv",
+                     show_col_types = FALSE)
+conditions_plot = published |> ggplot(aes(x = cond.s, y = cond.p)) +
+  geom_point(color = "red") +
+  geom_jitter(color = "red", width = 0.5, height = 0.3) +
+  geom_abline(intercept = 0, slope = 1) +
+  theme_classic() +
+  ylab("# of experimental conditions presented in the published paper") +
+  xlab("# of experimental conditions presented in the study") +
+  xlim(0,8)
+
+outcome_plot = published |> ggplot(aes(x = out.s, y = out.p)) +
+  geom_point(color = "blue") +
+  geom_jitter(color = "blue", width = 2, height = 1) +
+  geom_abline(intercept = 0, slope = 1) +
+  theme_classic() +
+  ylab("# of outcome variables presented in the published paper") +
+  xlab("# of outcome variables presented in the study")
+
+grid.arrange(conditions_plot, outcome_plot, ncol = 2)
+```
+     
+3. If a study has $p$ experimental conditions and measures a total of $k$ outcomes for each, then we might imagine that it generates $kp$ distinct null hypotheses that one could test (no effect of any particular condition on any particular outcome). Suppose that every null hypothesis in every study in `published` is *true*. Based on the values of `cond.s` and `out.s`
+     (a) What is the average (per paper) probability that we will reject at least one null hypothesis at the 5\% level?
+     (b) Repeat the preceding for *at least two* null hypotheses.
+     (c) Repeat the preceding for *at least three* null hypotheses.
+     (d) Discuss your findings in light of those from the other parts of this question.
+
+Comments:
+     (a) To answer the following questions I first computed the number of potential nulls per paper. Then to infer the probabilities of rejection, I compute the binomial probability of at least one, two, ... Finally, I take averages.
+     (d) These results suggest that the probability of rejecting at least one hypothesis given the number of hypothesis in each of the papers (even though assuming these are true!) would be of around 34\%. These results are consistent with the kind of evidence that we observe in the scatter-plot above suggesting that every study drops a few nulls when submitting. Open question being: Do they drop the ones which are not significant considering that finding "robust" evidence is a strong predictor of publication potential?
+     
+```{r}
+published = published |> mutate(nulls = cond.s*out.s)
+
+prob_rejection = function(n, prob = 0.05){
+  result = mean(1 - pbinom(n, size = published$nulls, prob = prob))*100
+  tibble("At least" = n,
+          "Rejection prob (%)" = round(result,2))
+}
+
+rbind(prob_rejection(1), prob_rejection(2), prob_rejection(3))
+
+```
+     
